@@ -148,9 +148,46 @@ Inclua o script abaixo no site institucional:
 
 Durante o desenvolvimento, o arquivo fica em `widget/solis-widget.js`.
 
-## WhatsApp
+## WhatsApp Cloud API oficial
 
-A arquitetura usa o mesmo endpoint `POST /chat/message` para mensagens vindas de WhatsApp. Um adaptador pode ser criado para provedores como Z-API, Twilio, WATI, Take Blip ou Evolution API convertendo o webhook recebido para o contrato:
+O projeto possui integração oficial com WhatsApp Business Platform / Cloud API da Meta. O webhook recebe eventos em `/webhook/whatsapp`, valida o `verify token`, valida `X-Hub-Signature-256` quando `WHATSAPP_APP_SECRET` estiver configurado, ignora duplicidades por `message_id`, chama o `ConversationService` e responde ao cliente pela Cloud API.
+
+Variáveis necessárias:
+
+- `WHATSAPP_ACCESS_TOKEN`
+- `WHATSAPP_PHONE_NUMBER_ID`
+- `WHATSAPP_BUSINESS_ACCOUNT_ID`
+- `WHATSAPP_VERIFY_TOKEN`
+- `WHATSAPP_APP_SECRET`
+- `WHATSAPP_API_VERSION`
+
+URL de callback para configurar na Meta:
+
+```text
+https://seu-dominio.com/webhook/whatsapp
+```
+
+Para testar localmente, exponha o backend com ngrok:
+
+```bash
+ngrok http 8000
+```
+
+Depois use a URL HTTPS do ngrok como callback, por exemplo:
+
+```text
+https://abc123.ngrok-free.app/webhook/whatsapp
+```
+
+No painel da Meta, defina o mesmo `WHATSAPP_VERIFY_TOKEN` configurado no `.env`. A rota `GET /webhook/whatsapp` responde o `hub.challenge` quando o token estiver correto.
+
+Mensagens iniciadas pelo cliente dentro da janela de 24 horas podem receber resposta livre. Mensagens iniciadas pela empresa fora dessa janela exigem templates aprovados pela Meta.
+
+Guia completo: [`docs/whatsapp-cloud-api.md`](docs/whatsapp-cloud-api.md).
+
+## Adaptadores futuros de WhatsApp
+
+O endpoint `POST /chat/message` continua funcionando para widget, testes e integrações futuras. Ele também pode ser usado por provedores como Z-API, Twilio, WATI, Take Blip ou Evolution API convertendo o webhook recebido para o contrato:
 
 ```json
 {

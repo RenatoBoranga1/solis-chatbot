@@ -58,6 +58,8 @@ class ChatMessageIn(BaseModel):
     conversation_id: str | None = None
     customer_id: str | None = None
     external_id: str | None = None
+    provider: str | None = None
+    provider_message_id: str | None = None
     attachment_url: str | None = None
     customer: CustomerIn | None = None
 
@@ -87,6 +89,8 @@ class MessageOut(BaseModel):
     sender_type: str
     content: str
     attachment_url: str | None
+    provider: str | None = None
+    provider_message_id: str | None = None
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)

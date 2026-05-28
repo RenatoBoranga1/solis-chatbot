@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -73,12 +73,17 @@ class Conversation(Base, TimestampMixin):
 
 class Message(Base):
     __tablename__ = "messages"
+    __table_args__ = (
+        Index("ux_messages_provider_message_id", "provider", "provider_message_id", unique=True),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     conversation_id: Mapped[str] = mapped_column(ForeignKey("conversations.id"), index=True)
     sender_type: Mapped[str] = mapped_column(String(20), index=True)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     attachment_url: Mapped[str | None] = mapped_column(String(800))
+    provider: Mapped[str | None] = mapped_column(String(60), index=True)
+    provider_message_id: Mapped[str | None] = mapped_column(String(180), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
 
     conversation: Mapped[Conversation] = relationship(back_populates="messages")

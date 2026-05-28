@@ -49,6 +49,8 @@ class ConversationService:
                 sender_type="customer",
                 content=message_text,
                 attachment_url=payload.attachment_url,
+                provider=self._message_provider(payload),
+                provider_message_id=payload.provider_message_id,
             )
         )
 
@@ -112,6 +114,13 @@ class ConversationService:
         self.db.commit()
         self.db.refresh(conversation)
         return conversation
+
+    def _message_provider(self, payload: ChatMessageIn) -> str | None:
+        if payload.provider:
+            return payload.provider
+        if payload.channel == "whatsapp" and payload.provider_message_id:
+            return "whatsapp"
+        return None
 
     def _decide_action(
         self,

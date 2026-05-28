@@ -27,6 +27,12 @@ class Settings(BaseSettings):
     whatsapp_provider: str | None = None
     whatsapp_webhook_secret: str | None = None
     whatsapp_api_token: str | None = None
+    whatsapp_access_token: str | None = None
+    whatsapp_phone_number_id: str | None = None
+    whatsapp_business_account_id: str | None = None
+    whatsapp_verify_token: str = "solis_verify_token_dev"
+    whatsapp_app_secret: str | None = None
+    whatsapp_api_version: str = "v20.0"
 
     attachment_storage: str = "local"
     attachment_base_url: AnyHttpUrl | str = "http://localhost:8000/uploads"

@@ -4,7 +4,15 @@ from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api import routes_auth, routes_chat, routes_dashboard, routes_knowledge, routes_leads, routes_tickets
+from app.api import (
+    routes_auth,
+    routes_chat,
+    routes_dashboard,
+    routes_knowledge,
+    routes_leads,
+    routes_tickets,
+    routes_whatsapp,
+)
 from app.core.config import settings
 
 app = FastAPI(
@@ -56,3 +64,4 @@ app.include_router(routes_leads.router)
 app.include_router(routes_tickets.router)
 app.include_router(routes_knowledge.router)
 app.include_router(routes_dashboard.router)
+app.include_router(routes_whatsapp.router)
