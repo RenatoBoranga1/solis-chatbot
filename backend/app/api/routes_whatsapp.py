@@ -117,7 +117,11 @@ async def receive_whatsapp_webhook(
             send_errors=send_errors,
         )
     except Exception as exc:
-        logger.exception("Failed to process WhatsApp webhook event ending with %s.", _safe_suffix(event_id))
+        logger.error(
+            "Failed to process WhatsApp webhook event ending with %s; error_type=%s.",
+            _safe_suffix(event_id),
+            exc.__class__.__name__,
+        )
         _mark_webhook_event_error(db, webhook_event, exc)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -182,8 +186,7 @@ def _safe_suffix(value: str | None) -> str:
 
 
 def _safe_error_message(exc: Exception) -> str:
-    message = str(exc).replace("\n", " ")[:300]
-    return f"{exc.__class__.__name__}: {message}"
+    return exc.__class__.__name__
 
 
 def _is_send_failure(result: dict) -> bool:

@@ -302,6 +302,24 @@ class WhatsAppWebhookTest(unittest.TestCase):
         self.assertTrue(events[-1].processed)
         self.assertIsNone(events[-1].error_message)
 
+    def test_post_webhook_records_webhook_event_error_message_on_exception(self):
+        class FailingConversationService:
+            def __init__(self, _db) -> None:
+                pass
+
+            def handle_message(self, _payload):
+                raise RuntimeError("internal processing failure with private data")
+
+        routes_whatsapp.ConversationService = FailingConversationService
+
+        response = self.client.post("/webhook/whatsapp", json=whatsapp_text_payload(message_id="wamid.fail"))
+
+        self.assertEqual(response.status_code, 500)
+        events = [item for item in self.fake_db.added if isinstance(item, WebhookEvent)]
+        self.assertTrue(events)
+        self.assertFalse(events[-1].processed)
+        self.assertEqual(events[-1].error_message, "RuntimeError")
+
     def test_post_webhook_counts_send_error(self):
         def fake_send_error(_service, _to: str, _message: str) -> dict:
             return {"status": "error", "reason": "send_failed"}

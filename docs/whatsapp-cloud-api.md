@@ -73,7 +73,7 @@ https://<subdominio-ngrok>/webhook/whatsapp
 
 ## 6. Auditoria
 
-Cada evento recebido gera um registro em `webhook_events`:
+Cada evento recebido gera um registro do modelo `WebhookEvent` em `webhook_events`:
 
 - `provider`: sempre `whatsapp`;
 - `event_id`: primeiro `message_id` encontrado, ou UUID quando nao houver mensagem;
@@ -118,7 +118,7 @@ Para `image`, `document` e `audio`, o parser preenche:
 - `message_type`;
 - `attachment_url=whatsapp://media/<media_id>`.
 
-O `ConversationService` mantem `attachment_url` em `messages` por compatibilidade e cria tambem um registro em `attachments` com `provider`, `provider_media_id`, `file_type`, `file_url`, `message_id` e `conversation_id`.
+O `ConversationService` mantem `attachment_url` em `messages` por compatibilidade e cria tambem um registro do modelo `Attachment` em `attachments` com `provider`, `provider_media_id`, `file_type`, `file_url`, `message_id` e `conversation_id`.
 
 ## 9. Erro de envio
 

@@ -183,9 +183,9 @@ No painel da Meta, defina o mesmo `WHATSAPP_VERIFY_TOKEN` configurado no `.env`.
 
 Mensagens iniciadas pelo cliente dentro da janela de 24 horas podem receber resposta livre. Mensagens iniciadas pela empresa fora dessa janela exigem templates aprovados pela Meta.
 
-Eventos recebidos sao gravados em `webhook_events` antes do processamento. A tabela guarda `provider`, `event_id`, `payload`, `processed` e `error_message`, permitindo auditoria e reprocessamento futuro sem expor tokens em logs. Mensagens duplicadas sao bloqueadas pelo indice unico `ux_messages_provider_message_id` em `messages(provider, provider_message_id)`.
+Eventos recebidos sao gravados pelo modelo `WebhookEvent` na tabela `webhook_events` antes do processamento. A tabela guarda `provider`, `event_id`, `payload`, `processed` e `error_message`, permitindo auditoria e reprocessamento futuro sem expor tokens em logs. Mensagens duplicadas sao bloqueadas pelo indice unico `ux_messages_provider_message_id` em `messages(provider, provider_message_id)`.
 
-Anexos de `image`, `document` e `audio` sao registrados na tabela `attachments`. Enquanto o download definitivo de midia nao estiver ativo, o arquivo fica referenciado como `whatsapp://media/<media_id>` junto ao `provider_media_id`.
+Anexos de `image`, `document` e `audio` sao registrados pelo modelo `Attachment` na tabela `attachments`, com `media_id`, `media_type`, `provider_media_id`, `message_id` e `conversation_id`. Enquanto o download definitivo de midia nao estiver ativo, o arquivo fica referenciado como `whatsapp://media/<media_id>` junto ao `provider_media_id`.
 
 O retorno do webhook inclui `send_errors`. Esse contador aumenta quando o envio pela Graph API retorna `status="error"` ou `status="skipped"`, sem expor token, payload bruto ou telefone completo. Em producao, configure obrigatoriamente `APP_ENV=production` e `WHATSAPP_APP_SECRET`. Sem assinatura `X-Hub-Signature-256` valida, o webhook retorna `403`. O webhook deve responder rapidamente; para alto volume, a proxima evolucao recomendada e colocar o processamento em uma fila assincrona.
 
