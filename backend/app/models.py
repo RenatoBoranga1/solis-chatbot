@@ -70,6 +70,7 @@ class Conversation(Base, TimestampMixin):
     messages: Mapped[list["Message"]] = relationship(back_populates="conversation", cascade="all, delete-orphan")
     handoffs: Mapped[list["Handoff"]] = relationship(back_populates="conversation", cascade="all, delete-orphan")
     attachments: Mapped[list["Attachment"]] = relationship(back_populates="conversation", cascade="all, delete-orphan")
+    ai_analyses: Mapped[list["AIAnalysis"]] = relationship(back_populates="conversation", cascade="all, delete-orphan")
 
 
 class Message(Base):
@@ -122,6 +123,36 @@ class WebhookEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
 
 
+class AIAnalysis(Base, TimestampMixin):
+    __tablename__ = "ai_analyses"
+    __table_args__ = (
+        Index("ix_ai_analyses_target", "analysis_type", "conversation_id", "lead_id", "ticket_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    conversation_id: Mapped[str | None] = mapped_column(ForeignKey("conversations.id"), index=True)
+    lead_id: Mapped[str | None] = mapped_column(ForeignKey("leads.id"), index=True)
+    ticket_id: Mapped[str | None] = mapped_column(ForeignKey("tickets.id"), index=True)
+    analysis_type: Mapped[str] = mapped_column(String(40), index=True, nullable=False)
+    executive_summary: Mapped[str] = mapped_column(Text, nullable=False)
+    customer_intent: Mapped[str] = mapped_column(String(80), index=True, nullable=False)
+    customer_sentiment: Mapped[str] = mapped_column(String(40), index=True, nullable=False)
+    urgency_level: Mapped[str] = mapped_column(String(40), index=True, nullable=False)
+    commercial_opportunity: Mapped[str] = mapped_column(String(40), index=True, nullable=False)
+    conversion_probability: Mapped[str] = mapped_column(String(40), index=True, nullable=False)
+    technical_risk: Mapped[str] = mapped_column(String(40), index=True, nullable=False)
+    priority_score: Mapped[int] = mapped_column(Integer, index=True, default=0, nullable=False)
+    missing_data: Mapped[list[str]] = mapped_column(JSONB, default=list, nullable=False)
+    recommended_next_action: Mapped[str] = mapped_column(Text, nullable=False)
+    suggested_reply: Mapped[str] = mapped_column(Text, nullable=False)
+    tags: Mapped[list[str]] = mapped_column(JSONB, default=list, nullable=False)
+    raw_analysis: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+
+    conversation: Mapped[Conversation | None] = relationship(back_populates="ai_analyses")
+    lead: Mapped["Lead | None"] = relationship(back_populates="ai_analyses")
+    ticket: Mapped["Ticket | None"] = relationship(back_populates="ai_analyses")
+
+
 class Lead(Base, TimestampMixin):
     __tablename__ = "leads"
 
@@ -138,6 +169,7 @@ class Lead(Base, TimestampMixin):
     extra: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
 
     customer: Mapped[Customer] = relationship(back_populates="leads")
+    ai_analyses: Mapped[list[AIAnalysis]] = relationship(back_populates="lead", cascade="all, delete-orphan")
 
 
 class Ticket(Base, TimestampMixin):
@@ -155,6 +187,7 @@ class Ticket(Base, TimestampMixin):
     extra: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
 
     customer: Mapped[Customer] = relationship(back_populates="tickets")
+    ai_analyses: Mapped[list[AIAnalysis]] = relationship(back_populates="ticket", cascade="all, delete-orphan")
 
 
 class KnowledgeBaseArticle(Base, TimestampMixin):

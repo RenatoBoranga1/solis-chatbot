@@ -2,6 +2,8 @@
 
 Este guia descreve a integracao oficial do Solis com a WhatsApp Business Platform / Cloud API da Meta.
 
+O código já está preparado para receber mensagens oficiais pelo webhook `/webhook/whatsapp`, registrar auditoria, deduplicar eventos, salvar anexos e responder pela Graph API. Para funcionar com um número real, ainda é necessário configurar Meta Business, Meta Developers App, produto WhatsApp, tokens e uma URL pública HTTPS.
+
 ## 1. App e numero
 
 1. Crie um app Business em Meta for Developers.
@@ -56,8 +58,16 @@ ngrok http 8000
 Use a URL HTTPS do ngrok como callback:
 
 ```text
-https://<subdominio-ngrok>/webhook/whatsapp
+https://SEU_SUBDOMINIO.ngrok-free.app/webhook/whatsapp
 ```
+
+Verify token para desenvolvimento:
+
+```text
+solis_verify_token_dev
+```
+
+Também é possível usar Cloudflare Tunnel, desde que a URL final seja HTTPS e aponte para o backend na porta `8000`.
 
 ## 5. Fluxo de entrada
 
@@ -146,6 +156,23 @@ Em `APP_ENV=development`, a ausencia de `WHATSAPP_APP_SECRET` e permitida para t
 Dentro da janela de atendimento de 24 horas iniciada pelo cliente, a empresa pode responder livremente. Fora dessa janela, mensagens iniciadas pela empresa exigem templates aprovados no WhatsApp Manager.
 
 ## 12. Checklist de producao
+
+Checklist de ativação real:
+
+- [ ] Criar app na Meta Developers.
+- [ ] Adicionar produto WhatsApp.
+- [ ] Copiar `Phone Number ID`.
+- [ ] Gerar `WHATSAPP_ACCESS_TOKEN`.
+- [ ] Configurar `WHATSAPP_APP_SECRET`.
+- [ ] Definir `WHATSAPP_VERIFY_TOKEN`.
+- [ ] Subir backend local.
+- [ ] Expor backend com ngrok.
+- [ ] Configurar webhook na Meta.
+- [ ] Assinar eventos de `messages`.
+- [ ] Enviar mensagem de teste.
+- [ ] Confirmar criação de `WebhookEvent`.
+- [ ] Confirmar resposta automática do bot.
+- [ ] Confirmar registro da conversa no painel.
 
 - Rodar `alembic upgrade head`.
 - Rodar `python -m unittest discover tests`.

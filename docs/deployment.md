@@ -24,6 +24,15 @@ Use este checklist antes de homologar ou publicar o Solis Chatbot com WhatsApp C
 - Validar `GET /webhook/whatsapp` no painel da Meta.
 - Confirmar que assinatura ausente ou invalida retorna `403` em producao.
 
+## Análise Inteligente
+
+- Configurar `ENABLE_GENERATIVE_AI=false` para usar apenas fallback por regras.
+- Configurar `OPENAI_API_KEY` somente em ambientes que usarão IA generativa.
+- Configurar `AI_PROVIDER=openai`.
+- Configurar `AI_MODEL` conforme política de custo e qualidade.
+- Confirmar que análises mascaram dados sensíveis.
+- Orientar atendentes a revisar respostas sugeridas antes do envio.
+
 ## Banco e migrations
 
 ```bash
@@ -37,6 +46,7 @@ Confirmar tabelas:
 - indice unico `ux_messages_provider_message_id`;
 - `webhook_events`;
 - `attachments`.
+- `ai_analyses`.
 
 ## Testes
 
@@ -46,6 +56,7 @@ python -m unittest discover tests
 ```
 
 Os testes devem cobrir webhook, assinatura, deduplicacao, anexos, auditoria, `send_errors`, classificacao de gravidade e handoff.
+Também devem cobrir análise por regras, lead quente, chamado crítico, resposta sugerida e endpoints de IA.
 
 ## Observabilidade e seguranca
 

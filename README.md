@@ -22,6 +22,7 @@ O projeto esta organizado como um monorepo simples:
 - Base de conhecimento administravel e pronta para RAG.
 - Registro de perguntas sem resposta.
 - Painel com dashboard, conversas, leads, chamados e artigos.
+- Análise Inteligente para conversas, leads, chamados e insights estratégicos do dashboard.
 - LGPD desde o inicio: consentimento, minimizacao, auditoria e endpoints para solicitacoes de dados.
 
 ## Como rodar localmente com Docker
@@ -134,6 +135,17 @@ Dashboard:
 - `GET /dashboard/severity`
 - `GET /dashboard/resolution-rate`
 
+Análise Inteligente:
+
+- `POST /ai/conversations/{conversation_id}/analyze`
+- `GET /ai/conversations/{conversation_id}/analysis`
+- `POST /ai/leads/{lead_id}/analyze`
+- `GET /ai/leads/{lead_id}/analysis`
+- `POST /ai/tickets/{ticket_id}/analyze`
+- `GET /ai/tickets/{ticket_id}/analysis`
+- `POST /ai/conversations/{conversation_id}/suggest-reply`
+- `GET /ai/dashboard/insights`
+
 ## Integracao com site
 
 Inclua o script abaixo no site institucional:
@@ -147,6 +159,8 @@ Inclua o script abaixo no site institucional:
 ```
 
 Durante o desenvolvimento, o arquivo fica em `widget/solis-widget.js`.
+
+O widget React e o script embutível mostram a mensagem do usuário imediatamente, exibem uma bolha temporária de processamento com três pontos animados, bloqueiam envio/atalhos enquanto aguardam resposta e mantêm o atraso humanizado apenas no frontend. O backend continua respondendo o mais rápido possível.
 
 ## WhatsApp Cloud API oficial
 
@@ -180,6 +194,23 @@ https://abc123.ngrok-free.app/webhook/whatsapp
 ```
 
 No painel da Meta, defina o mesmo `WHATSAPP_VERIFY_TOKEN` configurado no `.env`. A rota `GET /webhook/whatsapp` responde o `hub.challenge` quando o token estiver correto.
+
+Checklist para ativar WhatsApp real:
+
+- [ ] Criar app na Meta Developers.
+- [ ] Adicionar o produto WhatsApp.
+- [ ] Copiar `Phone Number ID`.
+- [ ] Gerar `WHATSAPP_ACCESS_TOKEN`.
+- [ ] Configurar `WHATSAPP_APP_SECRET`.
+- [ ] Definir `WHATSAPP_VERIFY_TOKEN`.
+- [ ] Subir o backend local ou em produção.
+- [ ] Expor o backend com ngrok ou Cloudflare Tunnel em ambiente local.
+- [ ] Configurar `https://SEU_SUBDOMINIO.ngrok-free.app/webhook/whatsapp` na Meta.
+- [ ] Assinar eventos de `messages`.
+- [ ] Enviar mensagem de teste.
+- [ ] Confirmar criação de `WebhookEvent`.
+- [ ] Confirmar resposta automática do bot.
+- [ ] Confirmar registro da conversa no painel.
 
 Mensagens iniciadas pelo cliente dentro da janela de 24 horas podem receber resposta livre. Mensagens iniciadas pela empresa fora dessa janela exigem templates aprovados pela Meta.
 
@@ -219,6 +250,19 @@ O servico `KnowledgeService` recupera artigos ativos por palavras-chave e catego
 - não inventar preço, prazo, economia, garantia ou diagnóstico;
 - registrar pergunta sem resposta;
 - encaminhar para humano quando a confianca for baixa.
+
+## Análise Inteligente
+
+O painel administrativo possui uma camada de análise estratégica para conversas, leads, chamados e dashboard. Ela gera resumo executivo, intenção principal, sentimento, urgência, oportunidade comercial, risco técnico, dados faltantes, próxima ação, resposta sugerida, tags e score de prioridade.
+
+Variáveis:
+
+- `ENABLE_GENERATIVE_AI=false`
+- `OPENAI_API_KEY=`
+- `AI_PROVIDER=openai`
+- `AI_MODEL=gpt-4.1-mini`
+
+Com `ENABLE_GENERATIVE_AI=false` ou sem chave de IA, o sistema usa fallback por regras e continua funcionando sem custo externo. Com IA generativa habilitada e chave configurada, o serviço tenta usar o provedor configurado e volta para regras se houver erro. As respostas sugeridas devem ser revisadas por um atendente antes do envio e não prometem preço, prazo, economia, garantia ou diagnóstico final.
 
 ## LGPD
 

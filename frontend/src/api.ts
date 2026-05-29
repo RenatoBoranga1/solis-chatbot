@@ -1,4 +1,13 @@
-import type { ChatResponse, Conversation, DashboardMetrics, KnowledgeArticle, Lead, Ticket } from "./types";
+import type {
+  AIAnalysis,
+  ChatResponse,
+  Conversation,
+  DashboardAIInsights,
+  DashboardMetrics,
+  KnowledgeArticle,
+  Lead,
+  Ticket,
+} from "./types";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 const ENABLE_DEMO_FALLBACK = import.meta.env.VITE_ENABLE_DEMO_FALLBACK !== "false";
@@ -121,6 +130,7 @@ async function adminFetch<T>(path: string, token: string, init?: RequestInit): P
 
 export const adminApi = {
   metrics: (token: string) => adminFetch<DashboardMetrics>("/dashboard/metrics", token),
+  aiInsights: (token: string) => adminFetch<DashboardAIInsights>("/ai/dashboard/insights", token),
   conversations: (token: string) => adminFetch<Conversation[]>("/chat/conversations", token),
   leads: (token: string) => adminFetch<Lead[]>("/leads", token),
   tickets: (token: string) => adminFetch<Ticket[]>("/tickets", token),
@@ -133,5 +143,17 @@ export const adminApi = {
     adminFetch<{ id: string; status: string }>(`/chat/conversations/${id}/handoff`, token, {
       method: "POST",
       body: JSON.stringify({ reason }),
+    }),
+  analyzeConversation: (token: string, id: string) =>
+    adminFetch<AIAnalysis>(`/ai/conversations/${id}/analyze`, token, { method: "POST" }),
+  getConversationAnalysis: (token: string, id: string) =>
+    adminFetch<AIAnalysis>(`/ai/conversations/${id}/analysis`, token),
+  analyzeLead: (token: string, id: string) =>
+    adminFetch<AIAnalysis>(`/ai/leads/${id}/analyze`, token, { method: "POST" }),
+  analyzeTicket: (token: string, id: string) =>
+    adminFetch<AIAnalysis>(`/ai/tickets/${id}/analyze`, token, { method: "POST" }),
+  suggestReply: (token: string, id: string) =>
+    adminFetch<{ conversation_id: string; suggested_reply: string }>(`/ai/conversations/${id}/suggest-reply`, token, {
+      method: "POST",
     }),
 };

@@ -2,6 +2,7 @@ export type ChatMessage = {
   id: string;
   sender: "customer" | "bot" | "human";
   content: string;
+  processing?: boolean;
 };
 
 export type QuickReply = {
@@ -35,6 +36,41 @@ export type DashboardMetrics = {
   transferidos_para_humano: number;
   taxa_conversao_orcamento: number;
   satisfacao_media: number | null;
+};
+
+export type AIAnalysis = {
+  id: string;
+  conversation_id: string | null;
+  lead_id: string | null;
+  ticket_id: string | null;
+  analysis_type: "conversation" | "lead" | "ticket" | "daily_dashboard";
+  executive_summary: string;
+  customer_intent: string;
+  customer_sentiment: string;
+  urgency_level: string;
+  commercial_opportunity: string;
+  conversion_probability: string;
+  technical_risk: string;
+  priority_score: number;
+  missing_data: string[];
+  recommended_next_action: string;
+  suggested_reply: string;
+  tags: string[];
+  raw_analysis: Record<string, unknown>;
+  created_at: string;
+  updated_at: string | null;
+};
+
+export type DashboardAIInsights = {
+  leads_quentes: number;
+  chamados_criticos: number;
+  clientes_irritados: number;
+  oportunidades_financiamento: number;
+  problemas_tecnicos_recorrentes: string[];
+  principais_motivos: string[];
+  principais_cidades: string[];
+  taxa_handoff: number;
+  recomendacoes: string[];
 };
 
 export type Conversation = {

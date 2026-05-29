@@ -6,6 +6,8 @@
   let conversationId = null;
   let open = false;
   let sending = false;
+  const minProcessingDelay = 1200;
+  const maxArtificialDelay = 2500;
 
   const quickReplies = [
     "Quero um orçamento",
@@ -14,6 +16,49 @@
     "Tenho dúvida sobre minha conta de energia",
     "Quero falar com atendente",
   ];
+
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  function normalizeIntentText(text) {
+    return String(text || "")
+      .normalize("NFD")
+      .replace(/\p{Diacritic}/gu, "")
+      .toLowerCase();
+  }
+
+  function processingMessageFor(text) {
+    const normalized = normalizeIntentText(text);
+    if (
+      normalized.includes("orcamento") ||
+      normalized.includes("instalar") ||
+      normalized.includes("energia solar") ||
+      normalized.includes("cotacao")
+    ) {
+      return "Solis está preparando a próxima pergunta para seu orçamento...";
+    }
+    if (
+      normalized.includes("suporte") ||
+      normalized.includes("tecnico") ||
+      normalized.includes("problema") ||
+      normalized.includes("inversor") ||
+      normalized.includes("gerando") ||
+      normalized.includes("app")
+    ) {
+      return "Solis está analisando o melhor encaminhamento técnico...";
+    }
+    if (
+      normalized.includes("duvida") ||
+      normalized.includes("conta") ||
+      normalized.includes("credito") ||
+      normalized.includes("economia")
+    ) {
+      return "Solis está buscando a melhor resposta...";
+    }
+    if (normalized.includes("atendente") || normalized.includes("humano") || normalized.includes("falar com alguem")) {
+      return "Solis está registrando sua solicitação para encaminhamento...";
+    }
+    return "Solis está processando sua solicitação...";
+  }
 
   const styles = document.createElement("style");
   styles.textContent = `
@@ -104,6 +149,27 @@
       background: #ffd34d;
       color: #10243a;
     }
+    .solis-embed-message.processing {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: #526274;
+      background: #eef3f7;
+    }
+    .solis-embed-dots {
+      display: inline-flex;
+      gap: 3px;
+      min-width: 22px;
+    }
+    .solis-embed-dots span {
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: #7b8998;
+      animation: solisEmbedTypingPulse 1.1s ease-in-out infinite;
+    }
+    .solis-embed-dots span:nth-child(2) { animation-delay: .16s; }
+    .solis-embed-dots span:nth-child(3) { animation-delay: .32s; }
     .solis-embed-quick {
       display: flex;
       flex-wrap: wrap;
@@ -119,6 +185,12 @@
       background: #fff;
       cursor: pointer;
       font: 500 13px inherit;
+    }
+    .solis-embed-quick button:disabled,
+    .solis-embed-form input:disabled,
+    .solis-embed-form button:disabled {
+      cursor: not-allowed;
+      opacity: .68;
     }
     .solis-embed-form {
       display: grid;
@@ -141,6 +213,10 @@
       color: #10243a;
       cursor: pointer;
       font-weight: 800;
+    }
+    @keyframes solisEmbedTypingPulse {
+      0%, 80%, 100% { opacity: .28; transform: translateY(0); }
+      40% { opacity: 1; transform: translateY(-2px); }
     }
     @media (max-width: 480px) {
       .solis-embed-panel {
@@ -184,13 +260,31 @@
   const quick = panel.querySelector(".solis-embed-quick");
   const form = panel.querySelector(".solis-embed-form");
   const input = form.querySelector("input");
+  const submitButton = form.querySelector("button");
 
-  function addMessage(sender, text) {
+  function addMessage(sender, text, options = {}) {
     const message = document.createElement("div");
-    message.className = `solis-embed-message ${sender}`;
+    message.className = `solis-embed-message ${sender}${options.processing ? " processing" : ""}`;
     message.textContent = text;
+    if (options.processing) {
+      const dots = document.createElement("span");
+      dots.className = "solis-embed-dots";
+      dots.setAttribute("aria-hidden", "true");
+      dots.innerHTML = "<span></span><span></span><span></span>";
+      message.appendChild(dots);
+    }
     messages.appendChild(message);
     messages.scrollTop = messages.scrollHeight;
+    return message;
+  }
+
+  function setSendingState(nextSending) {
+    sending = nextSending;
+    input.disabled = nextSending;
+    submitButton.disabled = nextSending;
+    quick.querySelectorAll("button").forEach((button) => {
+      button.disabled = nextSending;
+    });
   }
 
   function renderQuick(values) {
@@ -199,6 +293,7 @@
       const button = document.createElement("button");
       button.type = "button";
       button.textContent = value;
+      button.disabled = sending;
       button.addEventListener("click", () => send(value));
       quick.appendChild(button);
     });
@@ -207,10 +302,11 @@
   async function send(text) {
     const message = String(text || input.value || "").trim();
     if (!message || sending) return;
-    sending = true;
+    const startedAt = Date.now();
+    setSendingState(true);
     input.value = "";
     addMessage("customer", message);
-    addMessage("bot", "Solis está digitando...");
+    const processingMessage = addMessage("bot", processingMessageFor(message), { processing: true });
     try {
       const response = await fetch(`${apiBase}/chat/message`, {
         method: "POST",
@@ -221,19 +317,22 @@
           message,
         }),
       });
-      const typing = messages.lastElementChild;
-      if (typing) typing.remove();
       if (!response.ok) throw new Error("Request failed");
       const data = await response.json();
+      const elapsed = Date.now() - startedAt;
+      const remainingDelay = Math.min(maxArtificialDelay, Math.max(0, minProcessingDelay - elapsed));
+      if (remainingDelay > 0) {
+        await sleep(remainingDelay);
+      }
+      processingMessage.remove();
       conversationId = data.conversation_id;
       addMessage("bot", data.response);
       renderQuick((data.quick_replies || []).map((item) => item.value));
     } catch (error) {
-      const typing = messages.lastElementChild;
-      if (typing) typing.remove();
-      addMessage("bot", "Não consegui conectar à API local agora. Verifique se o backend está rodando.");
+      processingMessage.remove();
+      addMessage("bot", "Não consegui conectar ao atendimento agora. Verifique se a API local está ativa e tente novamente.");
     } finally {
-      sending = false;
+      setSendingState(false);
     }
   }
 

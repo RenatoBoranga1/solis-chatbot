@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api import (
+    routes_ai_analysis,
     routes_auth,
     routes_chat,
     routes_dashboard,
@@ -65,3 +66,4 @@ app.include_router(routes_tickets.router)
 app.include_router(routes_knowledge.router)
 app.include_router(routes_dashboard.router)
 app.include_router(routes_whatsapp.router)
+app.include_router(routes_ai_analysis.router)

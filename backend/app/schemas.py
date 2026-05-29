@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field
 Channel = Literal["site", "whatsapp", "instagram", "facebook", "admin"]
 SenderType = Literal["customer", "bot", "human"]
 Severity = Literal["baixa", "media", "alta"]
+AnalysisType = Literal["conversation", "lead", "ticket", "daily_dashboard"]
 
 
 class TokenOut(BaseModel):
@@ -223,3 +224,45 @@ class DashboardMetrics(BaseModel):
     transferidos_para_humano: int
     taxa_conversao_orcamento: float
     satisfacao_media: float | None
+
+
+class AIAnalysisOut(BaseModel):
+    id: str
+    conversation_id: str | None
+    lead_id: str | None
+    ticket_id: str | None
+    analysis_type: AnalysisType
+    executive_summary: str
+    customer_intent: str
+    customer_sentiment: str
+    urgency_level: str
+    commercial_opportunity: str
+    conversion_probability: str
+    technical_risk: str
+    priority_score: int
+    missing_data: list[str]
+    recommended_next_action: str
+    suggested_reply: str
+    tags: list[str]
+    raw_analysis: dict[str, Any]
+    created_at: datetime
+    updated_at: datetime | None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SuggestedReplyOut(BaseModel):
+    conversation_id: str
+    suggested_reply: str
+
+
+class DashboardAIInsights(BaseModel):
+    leads_quentes: int
+    chamados_criticos: int
+    clientes_irritados: int
+    oportunidades_financiamento: int
+    problemas_tecnicos_recorrentes: list[str] = Field(default_factory=list)
+    principais_motivos: list[str] = Field(default_factory=list)
+    principais_cidades: list[str] = Field(default_factory=list)
+    taxa_handoff: float
+    recomendacoes: list[str] = Field(default_factory=list)
