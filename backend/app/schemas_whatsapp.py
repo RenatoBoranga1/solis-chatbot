@@ -10,6 +10,7 @@ class WhatsAppIncomingMessage(BaseModel):
     timestamp: str | None = None
     message_type: str
     media_id: str | None = None
+    media_type: str | None = None
     attachment_url: str | None = None
     raw_type_payload: dict = Field(default_factory=dict)
 
@@ -19,3 +20,4 @@ class WhatsAppWebhookResult(BaseModel):
     processed: int = 0
     duplicates: int = 0
     ignored: int = 0
+    send_errors: int = 0

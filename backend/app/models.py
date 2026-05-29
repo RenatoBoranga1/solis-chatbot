@@ -69,6 +69,7 @@ class Conversation(Base, TimestampMixin):
     customer: Mapped[Customer | None] = relationship(back_populates="conversations")
     messages: Mapped[list["Message"]] = relationship(back_populates="conversation", cascade="all, delete-orphan")
     handoffs: Mapped[list["Handoff"]] = relationship(back_populates="conversation", cascade="all, delete-orphan")
+    attachments: Mapped[list["Attachment"]] = relationship(back_populates="conversation", cascade="all, delete-orphan")
 
 
 class Message(Base):
@@ -87,6 +88,38 @@ class Message(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
 
     conversation: Mapped[Conversation] = relationship(back_populates="messages")
+    attachments: Mapped[list["Attachment"]] = relationship(back_populates="message", cascade="all, delete-orphan")
+
+
+class Attachment(Base):
+    __tablename__ = "attachments"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    message_id: Mapped[str] = mapped_column(ForeignKey("messages.id"), index=True)
+    conversation_id: Mapped[str] = mapped_column(ForeignKey("conversations.id"), index=True)
+    provider: Mapped[str] = mapped_column(String(60), index=True, nullable=False)
+    provider_media_id: Mapped[str | None] = mapped_column(String(180), index=True)
+    file_type: Mapped[str] = mapped_column(String(40), index=True, nullable=False)
+    file_url: Mapped[str | None] = mapped_column(String(800))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    message: Mapped[Message] = relationship(back_populates="attachments")
+    conversation: Mapped[Conversation] = relationship(back_populates="attachments")
+
+
+class WebhookEvent(Base):
+    __tablename__ = "webhook_events"
+    __table_args__ = (
+        Index("ix_webhook_events_provider_event_id", "provider", "event_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    provider: Mapped[str] = mapped_column(String(60), index=True, nullable=False)
+    event_id: Mapped[str] = mapped_column(String(180), index=True, nullable=False)
+    payload: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    processed: Mapped[bool] = mapped_column(Boolean, default=False, index=True, nullable=False)
+    error_message: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
 
 
 class Lead(Base, TimestampMixin):

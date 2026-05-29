@@ -15,14 +15,17 @@ SUPPORTED_MESSAGE_TYPES = {"text", "image", "document", "audio"}
 
 def verify_meta_signature(raw_body: bytes, signature_header: str | None) -> bool:
     app_secret = settings.whatsapp_app_secret
+    app_env = settings.app_env.strip().lower()
     if not app_secret:
-        if settings.app_env.lower() == "production":
+        if app_env == "production":
             logger.error("WhatsApp signature validation is required in production.")
             return False
         logger.warning("WhatsApp app secret is not configured; skipping signature validation in development.")
         return True
 
     if not signature_header or not signature_header.startswith("sha256="):
+        if app_env == "production":
+            logger.warning("WhatsApp signature header is missing or malformed in production.")
         return False
 
     digest = hmac.new(app_secret.encode("utf-8"), raw_body, hashlib.sha256).hexdigest()
@@ -89,12 +92,15 @@ class WhatsAppCloudService:
     def parse_payload(self, payload: dict) -> list[WhatsAppIncomingMessage]:
         incoming: list[WhatsAppIncomingMessage] = []
 
-        for entry in payload.get("entry", []):
-            for change in entry.get("changes", []):
-                value = change.get("value", {})
-                contacts_by_wa_id = self._contacts_by_wa_id(value.get("contacts", []))
+        for entry in self._as_list(payload.get("entry")):
+            entry_data = self._as_dict(entry)
+            for change in self._as_list(entry_data.get("changes")):
+                change_data = self._as_dict(change)
+                value = self._as_dict(change_data.get("value"))
+                contacts_by_wa_id = self._contacts_by_wa_id(self._as_list(value.get("contacts")))
 
-                for message in value.get("messages", []):
+                for raw_message in self._as_list(value.get("messages")):
+                    message = self._as_dict(raw_message)
                     message_type = message.get("type")
                     if message_type not in SUPPORTED_MESSAGE_TYPES:
                         logger.info("Ignoring unsupported WhatsApp message type: %s", message_type)
@@ -109,6 +115,9 @@ class WhatsAppCloudService:
                     if not wa_id or not message.get("id"):
                         logger.info("Ignoring WhatsApp message without wa_id or message id.")
                         continue
+                    if not text.strip():
+                        logger.info("Ignoring WhatsApp message ending with %s because it has no processable text.", str(message.get("id"))[-6:])
+                        continue
 
                     incoming.append(
                         WhatsAppIncomingMessage(
@@ -120,6 +129,7 @@ class WhatsAppCloudService:
                             timestamp=message.get("timestamp"),
                             message_type=message_type,
                             media_id=media_id,
+                            media_type=message_type if media_id else None,
                             attachment_url=attachment_url,
                             raw_type_payload=raw_type_payload,
                         )
@@ -158,16 +168,29 @@ class WhatsAppCloudService:
 
     @staticmethod
     def _contacts_by_wa_id(contacts: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
-        return {str(contact.get("wa_id")): contact for contact in contacts if contact.get("wa_id")}
+        return {
+            str(contact.get("wa_id")): contact
+            for raw_contact in contacts
+            if (contact := WhatsAppCloudService._as_dict(raw_contact)).get("wa_id")
+        }
 
     @staticmethod
     def _extract_content(message: dict, message_type: str) -> tuple[str, str | None, str | None, dict]:
         if message_type == "text":
-            text = message.get("text", {}).get("body") or ""
-            return text, None, None, message.get("text", {})
+            text_payload = WhatsAppCloudService._as_dict(message.get("text"))
+            text = text_payload.get("body") or ""
+            return text, None, None, text_payload
 
-        type_payload = message.get(message_type, {}) or {}
+        type_payload = WhatsAppCloudService._as_dict(message.get(message_type))
         media_id = type_payload.get("id")
         text = type_payload.get("caption") or f"Cliente enviou um anexo do tipo {message_type}"
         attachment_url = f"whatsapp://media/{media_id}" if media_id else None
         return text, media_id, attachment_url, type_payload
+
+    @staticmethod
+    def _as_dict(value: Any) -> dict[str, Any]:
+        return value if isinstance(value, dict) else {}
+
+    @staticmethod
+    def _as_list(value: Any) -> list[Any]:
+        return value if isinstance(value, list) else []

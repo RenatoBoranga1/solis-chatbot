@@ -61,6 +61,8 @@ class ChatMessageIn(BaseModel):
     provider: str | None = None
     provider_message_id: str | None = None
     attachment_url: str | None = None
+    media_id: str | None = None
+    media_type: str | None = None
     customer: CustomerIn | None = None
 
 

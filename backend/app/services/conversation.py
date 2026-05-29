@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.core.privacy import LGPD_CONSENT_MESSAGE, encrypt_value
 from app.core.security import sanitize_text
-from app.models import Conversation, Customer, Handoff, Lead, Message, Ticket, utc_now
+from app.models import Attachment, Conversation, Customer, Handoff, Lead, Message, Ticket, utc_now
 from app.schemas import ChatMessageIn, ChatMessageOut, QuickReply
 from app.services.flows import next_missing_question, summarize_collected_data
 from app.services.intent import classify_intent, is_commercial_intent, is_support_intent, normalize
@@ -43,16 +43,17 @@ class ConversationService:
         conversation = self._get_or_create_conversation(payload)
         customer = conversation.customer
 
-        self.db.add(
-            Message(
-                conversation_id=conversation.id,
-                sender_type="customer",
-                content=message_text,
-                attachment_url=payload.attachment_url,
-                provider=self._message_provider(payload),
-                provider_message_id=payload.provider_message_id,
-            )
+        customer_message = Message(
+            conversation_id=conversation.id,
+            sender_type="customer",
+            content=message_text,
+            attachment_url=payload.attachment_url,
+            provider=self._message_provider(payload),
+            provider_message_id=payload.provider_message_id,
         )
+        self.db.add(customer_message)
+        self.db.flush()
+        self._create_attachment_if_present(conversation, customer_message, payload)
 
         intent_result = classify_intent(message_text)
         severity_result = classify_severity(message_text, intent_result.name)
@@ -63,9 +64,12 @@ class ConversationService:
         self._capture_answer_from_previous_question(collected, customer, message_text)
         self._merge_payload_customer(customer, payload)
 
-        if payload.attachment_url:
+        attachment_reference = payload.attachment_url or (
+            f"whatsapp://media/{payload.media_id}" if payload.media_id else None
+        )
+        if attachment_reference:
             collected.setdefault("attachments", [])
-            collected["attachments"] = [*collected["attachments"], payload.attachment_url]
+            collected["attachments"] = [*collected["attachments"], attachment_reference]
 
         action = self._decide_action(conversation, customer, collected, message_text, intent_result.name)
         conversation.collected_data = collected
@@ -115,12 +119,37 @@ class ConversationService:
         self.db.refresh(conversation)
         return conversation
 
-    def _message_provider(self, payload: ChatMessageIn) -> str | None:
+    @staticmethod
+    def _message_provider(payload: ChatMessageIn) -> str | None:
         if payload.provider:
             return payload.provider
-        if payload.channel == "whatsapp" and payload.provider_message_id:
+        if payload.channel == "whatsapp":
             return "whatsapp"
-        return None
+        return payload.channel
+
+    def _create_attachment_if_present(
+        self,
+        conversation: Conversation,
+        message: Message,
+        payload: ChatMessageIn,
+    ) -> None:
+        file_url = payload.attachment_url
+        if not file_url and payload.media_id:
+            file_url = f"whatsapp://media/{payload.media_id}"
+
+        if not file_url:
+            return
+
+        self.db.add(
+            Attachment(
+                message_id=message.id,
+                conversation_id=conversation.id,
+                provider=self._message_provider(payload),
+                provider_media_id=payload.media_id,
+                file_type=payload.media_type or "unknown",
+                file_url=file_url,
+            )
+        )
 
     def _decide_action(
         self,

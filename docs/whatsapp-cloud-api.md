@@ -1,26 +1,19 @@
 # WhatsApp Cloud API
 
-Este guia mostra como conectar o Solis à WhatsApp Business Platform / Cloud API oficial da Meta.
+Este guia descreve a integracao oficial do Solis com a WhatsApp Business Platform / Cloud API da Meta.
 
-## 1. Criar app na Meta
+## 1. App e numero
 
-1. Acesse [Meta for Developers](https://developers.facebook.com/).
-2. Crie um app do tipo Business.
-3. Vincule ou crie um Business Manager.
-4. Adicione o produto WhatsApp ao app.
+1. Crie um app Business em Meta for Developers.
+2. Adicione o produto WhatsApp.
+3. Configure ou vincule o numero de telefone.
+4. Copie `Phone Number ID` e `WhatsApp Business Account ID`.
+5. Gere um access token com permissao para envio de mensagens.
 
-## 2. Configurar número
-
-1. No produto WhatsApp, configure um número de telefone.
-2. Copie o `Phone Number ID`.
-3. Copie o `WhatsApp Business Account ID`.
-4. Gere um access token com permissão para enviar mensagens.
-
-## 3. Configurar variáveis
-
-No ambiente do backend:
+## 2. Variaveis
 
 ```env
+APP_ENV=production
 WHATSAPP_ACCESS_TOKEN=
 WHATSAPP_PHONE_NUMBER_ID=
 WHATSAPP_BUSINESS_ACCOUNT_ID=
@@ -29,131 +22,142 @@ WHATSAPP_APP_SECRET=
 WHATSAPP_API_VERSION=v20.0
 ```
 
-Em produção, configure também:
+Em producao, `WHATSAPP_APP_SECRET` e obrigatorio. Sem ele, o webhook rejeita chamadas porque nao consegue validar `X-Hub-Signature-256`.
 
-```env
-APP_ENV=production
-WHATSAPP_APP_SECRET=<app-secret-da-meta>
-```
+## 3. Webhook
 
-Com `APP_ENV=production`, a assinatura `X-Hub-Signature-256` é obrigatória.
-
-## 4. Configurar webhook
-
-No painel da Meta, configure:
+Callback:
 
 ```text
 https://seu-dominio.com/webhook/whatsapp
 ```
 
-Use o mesmo valor de `WHATSAPP_VERIFY_TOKEN` no campo Verify Token.
+Rotas implementadas:
 
-Assine o campo:
+- `GET /webhook/whatsapp`: validacao inicial da Meta com `hub.challenge`.
+- `POST /webhook/whatsapp`: recebimento de eventos e mensagens.
 
-```text
-messages
-```
+Assine o campo `messages` no painel da Meta.
 
-O Solis implementa:
-
-- `GET /webhook/whatsapp` para validação inicial da Meta.
-- `POST /webhook/whatsapp` para receber mensagens.
-
-## 5. Testar localmente com ngrok
-
-Suba a API:
+## 4. Teste local
 
 ```bash
 cd backend
+alembic upgrade head
 uvicorn app.main:app --reload
 ```
 
-Exponha localmente:
+Em outro terminal:
 
 ```bash
 ngrok http 8000
 ```
 
-Configure no painel da Meta:
+Use a URL HTTPS do ngrok como callback:
 
 ```text
 https://<subdominio-ngrok>/webhook/whatsapp
 ```
 
-## 6. Fluxo de recebimento
-
-Quando o cliente envia uma mensagem:
+## 5. Fluxo de entrada
 
 1. A Meta chama `POST /webhook/whatsapp`.
-2. O backend valida a assinatura quando configurada.
-3. O payload oficial é convertido para `WhatsAppIncomingMessage`.
-4. Mensagens duplicadas são ignoradas por `provider=whatsapp` e `provider_message_id`.
-5. O backend monta um `ChatMessageIn`.
-6. O `ConversationService` classifica intenção, gravidade, lead, ticket e handoff.
-7. O `WhatsAppCloudService` envia a resposta para a Cloud API.
+2. O backend valida a assinatura quando `APP_ENV=production`.
+3. O payload bruto e salvo em `webhook_events`.
+4. O payload e convertido para `WhatsAppIncomingMessage`.
+5. A deduplicacao consulta `messages(provider, provider_message_id)`.
+6. Mensagens novas viram `ChatMessageIn`.
+7. O `ConversationService` classifica intencao, gravidade, lead, ticket e handoff.
+8. O `WhatsAppCloudService` envia a resposta pela Graph API.
+9. O `WebhookEvent` e marcado como `processed=true` quando termina sem excecao.
 
-## 7. Tipos suportados
+## 6. Auditoria
 
-Nesta etapa, o Solis processa:
+Cada evento recebido gera um registro em `webhook_events`:
+
+- `provider`: sempre `whatsapp`;
+- `event_id`: primeiro `message_id` encontrado, ou UUID quando nao houver mensagem;
+- `payload`: JSON bruto recebido da Meta;
+- `processed`: comeca `false` e vira `true` ao final;
+- `error_message`: erro tecnico resumido quando houver excecao;
+- `created_at`: data de recebimento.
+
+O retorno da API nunca expoe o payload bruto.
+
+## 7. Deduplicacao
+
+Mensagens recebidas da Meta podem ser reenviadas. Antes de chamar o `ConversationService`, o webhook verifica:
+
+```text
+provider = whatsapp
+provider_message_id = incoming.message_id
+```
+
+Se ja existir, o webhook:
+
+- nao chama o `ConversationService`;
+- nao envia resposta novamente;
+- incrementa `duplicates`;
+- marca o `WebhookEvent` como processado;
+- retorna `duplicate_ignored` quando todas as mensagens forem duplicadas.
+
+O indice unico `ux_messages_provider_message_id` protege o banco contra reprocessamento.
+
+## 8. Anexos
+
+Tipos suportados:
 
 - `text`
 - `image`
 - `document`
 - `audio`
 
-Para anexos, o webhook registra uma mensagem como:
+Para `image`, `document` e `audio`, o parser preenche:
 
-```text
-Cliente enviou um anexo do tipo image
-```
+- `media_id`;
+- `message_type`;
+- `attachment_url=whatsapp://media/<media_id>`.
 
-O `media_id` é preservado como `whatsapp://media/<media_id>` em `attachment_url` quando disponível.
+O `ConversationService` mantem `attachment_url` em `messages` por compatibilidade e cria tambem um registro em `attachments` com `provider`, `provider_media_id`, `file_type`, `file_url`, `message_id` e `conversation_id`.
 
-## 8. Envio de mensagens
+## 9. Erro de envio
 
-Endpoint oficial usado:
+O envio usa:
 
 ```text
 POST https://graph.facebook.com/{version}/{phone_number_id}/messages
 ```
 
-Payload:
+Se `send_text_message` retornar `status="error"` ou `status="skipped"`, o webhook incrementa `send_errors` e registra log seguro, sem token, payload bruto ou telefone completo.
 
-```json
-{
-  "messaging_product": "whatsapp",
-  "to": "5511999999999",
-  "type": "text",
-  "text": {
-    "preview_url": false,
-    "body": "Mensagem do Solis"
-  }
-}
-```
+## 10. Seguranca
 
-## 9. Janela de 24 horas
+Em `APP_ENV=production`:
 
-Quando o cliente inicia a conversa, a empresa pode responder livremente dentro da janela de atendimento de 24 horas.
+- `WHATSAPP_APP_SECRET` e obrigatorio;
+- `X-Hub-Signature-256` e obrigatorio;
+- assinatura ausente retorna `403`;
+- assinatura invalida retorna `403`.
 
-Fora da janela de 24 horas, mensagens iniciadas pela empresa exigem templates aprovados pela Meta.
+Em `APP_ENV=development`, a ausencia de `WHATSAPP_APP_SECRET` e permitida para testes locais, com warning em log.
 
-## 10. Templates
+## 11. Janela de 24 horas e templates
 
-Use templates para:
+Dentro da janela de atendimento de 24 horas iniciada pelo cliente, a empresa pode responder livremente. Fora dessa janela, mensagens iniciadas pela empresa exigem templates aprovados no WhatsApp Manager.
 
-- retorno de orçamento;
-- lembrete de visita técnica;
-- atualização de chamado;
-- confirmação de agendamento;
-- retomada de conversa fora da janela de 24 horas.
+## 12. Checklist de producao
 
-Templates devem ser cadastrados e aprovados no WhatsApp Manager antes do uso.
-
-## 11. Segurança
-
-- Nunca versionar tokens reais.
-- Usar HTTPS em produção.
+- Rodar `alembic upgrade head`.
+- Rodar `python -m unittest discover tests`.
+- Usar HTTPS.
+- Configurar `APP_ENV=production`.
 - Configurar `WHATSAPP_APP_SECRET`.
-- Validar `X-Hub-Signature-256`.
-- Não registrar conteúdo sensível em logs.
-- Usar permissões mínimas no token da Meta.
+- Configurar `WHATSAPP_ACCESS_TOKEN`.
+- Configurar `WHATSAPP_PHONE_NUMBER_ID`.
+- Configurar `WHATSAPP_BUSINESS_ACCOUNT_ID`.
+- Restringir CORS.
+- Trocar credenciais padrao.
+- Ativar logs estruturados sem dados sensiveis.
+- Configurar backup do PostgreSQL.
+- Monitorar `send_errors`, duplicidades e eventos com `processed=false`.
+- Planejar fila/worker para alto volume.

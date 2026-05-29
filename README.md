@@ -150,7 +150,7 @@ Durante o desenvolvimento, o arquivo fica em `widget/solis-widget.js`.
 
 ## WhatsApp Cloud API oficial
 
-O projeto possui integração oficial com WhatsApp Business Platform / Cloud API da Meta. O webhook recebe eventos em `/webhook/whatsapp`, valida o `verify token`, valida `X-Hub-Signature-256` quando `WHATSAPP_APP_SECRET` estiver configurado, ignora duplicidades por `message_id`, chama o `ConversationService` e responde ao cliente pela Cloud API.
+O projeto possui integracao oficial com WhatsApp Business Platform / Cloud API da Meta. O webhook recebe eventos em `/webhook/whatsapp`, valida o `verify token`, valida `X-Hub-Signature-256`, ignora duplicidades por `message_id`, chama o `ConversationService` e responde ao cliente pela Cloud API.
 
 Variáveis necessárias:
 
@@ -182,6 +182,20 @@ https://abc123.ngrok-free.app/webhook/whatsapp
 No painel da Meta, defina o mesmo `WHATSAPP_VERIFY_TOKEN` configurado no `.env`. A rota `GET /webhook/whatsapp` responde o `hub.challenge` quando o token estiver correto.
 
 Mensagens iniciadas pelo cliente dentro da janela de 24 horas podem receber resposta livre. Mensagens iniciadas pela empresa fora dessa janela exigem templates aprovados pela Meta.
+
+Eventos recebidos sao gravados em `webhook_events` antes do processamento. A tabela guarda `provider`, `event_id`, `payload`, `processed` e `error_message`, permitindo auditoria e reprocessamento futuro sem expor tokens em logs. Mensagens duplicadas sao bloqueadas pelo indice unico `ux_messages_provider_message_id` em `messages(provider, provider_message_id)`.
+
+Anexos de `image`, `document` e `audio` sao registrados na tabela `attachments`. Enquanto o download definitivo de midia nao estiver ativo, o arquivo fica referenciado como `whatsapp://media/<media_id>` junto ao `provider_media_id`.
+
+O retorno do webhook inclui `send_errors`. Esse contador aumenta quando o envio pela Graph API retorna `status="error"` ou `status="skipped"`, sem expor token, payload bruto ou telefone completo. Em producao, configure obrigatoriamente `APP_ENV=production` e `WHATSAPP_APP_SECRET`. Sem assinatura `X-Hub-Signature-256` valida, o webhook retorna `403`. O webhook deve responder rapidamente; para alto volume, a proxima evolucao recomendada e colocar o processamento em uma fila assincrona.
+
+Antes de publicar ou atualizar ambientes, rode:
+
+```bash
+cd backend
+alembic upgrade head
+python -m unittest discover tests
+```
 
 Guia completo: [`docs/whatsapp-cloud-api.md`](docs/whatsapp-cloud-api.md).
 
@@ -224,7 +238,7 @@ cd backend
 python -m unittest discover tests
 ```
 
-Os testes iniciais cobrem classificacao de intencao e gravidade. Amplie com testes de API, autenticacao e fluxos conversacionais antes de producao.
+Os testes cobrem classificacao de intencao, gravidade, validacao do webhook, assinatura da Meta, deduplicacao, anexos, auditoria `WebhookEvent` e falhas de envio.
 
 ## Deploy sugerido
 
@@ -235,5 +249,5 @@ Os testes iniciais cobrem classificacao de intencao e gravidade. Amplie com test
 5. Publicar frontend estatico em CDN/Vercel/Netlify ou servir por Nginx.
 6. Servir `widget/solis-widget.js` com cache versionado.
 7. Configurar dominio, HTTPS, CORS restrito e WAF/rate limit.
-8. Integrar webhook do WhatsApp ao adaptador escolhido.
+8. Configurar webhook oficial da Meta em `https://seu-dominio.com/webhook/whatsapp`.
 9. Cadastrar base de conhecimento oficial antes de habilitar respostas generativas.

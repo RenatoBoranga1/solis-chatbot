@@ -35,19 +35,30 @@ gunicorn app.main:app -k uvicorn.workers.UvicornWorker --workers 3 --bind 0.0.0.
 
 ## WhatsApp
 
-1. Escolher provedor: WhatsApp Cloud API, Z-API, Twilio, WATI, Take Blip ou Evolution API.
-2. Criar endpoint adaptador para webhooks do provedor.
-3. Validar assinatura/token do webhook.
-4. Converter entrada para `POST /chat/message`.
-5. Enviar a resposta do Solis de volta pelo provedor.
+1. Usar a WhatsApp Cloud API oficial da Meta em `POST /webhook/whatsapp`.
+2. Configurar callback HTTPS: `https://seu-dominio.com/webhook/whatsapp`.
+3. Definir `WHATSAPP_VERIFY_TOKEN` no backend e no painel da Meta.
+4. Definir `WHATSAPP_APP_SECRET` em producao para validar `X-Hub-Signature-256`.
+5. Definir `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID` e `WHATSAPP_BUSINESS_ACCOUNT_ID`.
+6. Monitorar `webhook_events`, `duplicates` e `send_errors`.
 
 ## Producao segura
 
 - HTTPS obrigatorio.
+- `APP_ENV=production`.
+- `APP_DEBUG=false`.
+- `WHATSAPP_APP_SECRET` obrigatorio.
+- `WHATSAPP_ACCESS_TOKEN` configurado sem versionar segredo.
+- `WHATSAPP_PHONE_NUMBER_ID` e `WHATSAPP_BUSINESS_ACCOUNT_ID` conferidos.
+- `alembic upgrade head` no release.
+- Credenciais padrao trocadas.
 - Rate limit em borda e API.
 - WAF para painel administrativo.
+- CORS restrito aos dominios oficiais.
 - Backups automaticos criptografados.
+- Logs estruturados sem payload bruto, token ou telefone completo.
 - Logs sem dados sensiveis desnecessarios.
 - Storage seguro para anexos.
+- Dominio real apontado e certificado renovavel.
 - Monitoramento de erros e disponibilidade.
 - Politica formal de retencao e exclusao de dados LGPD.
