@@ -8,6 +8,8 @@ import type {
   KnowledgeArticle,
   Lead,
   Proposal,
+  ProposalPriceItem,
+  ProposalSendRequest,
   ProposalSendResult,
   Ticket,
 } from "./types";
@@ -128,6 +130,7 @@ async function adminFetch<T>(path: string, token: string, init?: RequestInit): P
     },
   });
   if (!response.ok) throw new Error(`Falha ao carregar ${path}.`);
+  if (response.status === 204) return undefined as T;
   return response.json();
 }
 
@@ -138,6 +141,7 @@ export const adminApi = {
   leads: (token: string) => adminFetch<Lead[]>("/leads", token),
   tickets: (token: string) => adminFetch<Ticket[]>("/tickets", token),
   proposals: (token: string) => adminFetch<Proposal[]>("/proposals", token),
+  proposalPriceItems: (token: string) => adminFetch<ProposalPriceItem[]>("/proposal-price-items", token),
   knowledge: (token: string) => adminFetch<KnowledgeArticle[]>("/knowledge", token),
   createProposal: (token: string, payload: Partial<Proposal>) =>
     adminFetch<Proposal>("/proposals", token, { method: "POST", body: JSON.stringify(payload) }),
@@ -156,11 +160,24 @@ export const adminApi = {
     adminFetch<Proposal>(`/proposals/${proposalId}/items/${itemId}`, token, { method: "DELETE" }),
   generateProposalPdf: (token: string, id: string) =>
     adminFetch<Proposal>(`/proposals/${id}/generate-pdf`, token, { method: "POST" }),
-  sendProposal: (token: string, id: string) =>
+  applyProposalPriceTable: (token: string, id: string) =>
+    adminFetch<Proposal>(`/proposals/${id}/apply-price-table`, token, { method: "POST" }),
+  sendProposal: (token: string, id: string, payload: ProposalSendRequest) =>
     adminFetch<ProposalSendResult>(`/proposals/${id}/send`, token, {
       method: "POST",
-      body: JSON.stringify({ channel: "manual" }),
+      body: JSON.stringify(payload),
     }),
+  createProposalPriceItem: (token: string, payload: Partial<ProposalPriceItem>) =>
+    adminFetch<ProposalPriceItem>("/proposal-price-items", token, { method: "POST", body: JSON.stringify(payload) }),
+  updateProposalPriceItem: (token: string, id: string, payload: Partial<ProposalPriceItem>) =>
+    adminFetch<ProposalPriceItem>(`/proposal-price-items/${id}`, token, { method: "PUT", body: JSON.stringify(payload) }),
+  updateProposalPriceItemActive: (token: string, id: string, active: boolean) =>
+    adminFetch<ProposalPriceItem>(`/proposal-price-items/${id}/active`, token, {
+      method: "PATCH",
+      body: JSON.stringify({ active }),
+    }),
+  deleteProposalPriceItem: (token: string, id: string) =>
+    adminFetch<void>(`/proposal-price-items/${id}`, token, { method: "DELETE" }),
   createKnowledge: (token: string, payload: Omit<KnowledgeArticle, "id" | "created_at">) =>
     adminFetch<KnowledgeArticle>("/knowledge", token, { method: "POST", body: JSON.stringify(payload) }),
   updateTicketStatus: (token: string, id: string, status: string) =>

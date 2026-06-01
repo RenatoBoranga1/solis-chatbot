@@ -1,19 +1,25 @@
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session, selectinload
 
-from app.models import AuditLog, Conversation, Customer, Lead, Proposal, ProposalItem, User
+from app.core.config import settings
+from app.models import AuditLog, Conversation, Customer, Lead, Proposal, ProposalItem, ProposalPriceItem, User
 from app.schemas import (
     ProposalCreate,
     ProposalItemCreate,
     ProposalItemUpdate,
+    ProposalPriceItemCreate,
+    ProposalPriceItemUpdate,
     ProposalSendRequest,
     ProposalSendResult,
     ProposalUpdate,
 )
+from app.services.email import EmailService
 from app.services.proposal_pdf import ProposalPdfService
+from app.services.whatsapp_cloud import WhatsAppCloudService
 
 DEFAULT_PROPOSAL_NOTICE = (
     "Esta proposta foi gerada como rascunho com base nos dados coletados pelo Solis. "
@@ -54,6 +60,8 @@ class ProposalService:
         self.db = db
         self.actor = actor
         self.pdf_service = ProposalPdfService()
+        self.email_service = EmailService()
+        self.whatsapp_service = WhatsAppCloudService()
 
     def list_proposals(self, status: str | None = None, city: str | None = None, customer: str | None = None) -> list[Proposal]:
         statement = select(Proposal).options(selectinload(Proposal.items)).order_by(desc(Proposal.created_at)).limit(300)
@@ -89,9 +97,16 @@ class ProposalService:
         average_bill = self._float_or_none(lead.average_bill or collected.get("average_bill"))
         power_kwp, generation_kwh = self._estimate_system(average_bill)
         missing = self._missing_lead_data(lead, customer, collected)
+        active_price_items = self._active_price_items()
         internal_notes = DEFAULT_PROPOSAL_NOTICE
         if missing:
             internal_notes += f" Dados faltantes: {', '.join(missing)}."
+        if active_price_items:
+            internal_notes += " Valores carregados da tabela de precos configuravel. Revise antes de enviar."
+        else:
+            internal_notes += (
+                " Nao ha tabela de precos configurada. Os itens foram criados com valores zerados para revisao manual."
+            )
 
         proposal = Proposal(
             customer_id=lead.customer_id,
@@ -117,19 +132,22 @@ class ProposalService:
         )
         self.db.add(proposal)
         self.db.flush()
-        for index, (category, description) in enumerate(DEFAULT_ITEMS):
-            self._add_item_object(
-                proposal,
-                ProposalItemCreate(
-                    category=category,
-                    description=description,
-                    quantity=1,
+        if active_price_items:
+            self._apply_price_items_to_proposal(proposal, active_price_items)
+        else:
+            for index, (category, description) in enumerate(DEFAULT_ITEMS):
+                self._add_item_object(
+                    proposal,
+                    ProposalItemCreate(
+                        category=category,
+                        description=description,
+                        quantity=1,
                     unit="serviço" if category in {"mao_de_obra", "projeto", "homologacao"} else "un",
-                    unit_price=0,
-                    sort_order=index,
-                ),
-                index,
-            )
+                        unit_price=0,
+                        sort_order=index,
+                    ),
+                    index,
+                )
         self.recalculate(proposal)
         self._audit("proposal.created", proposal, {"origin": "lead", "lead_id": lead.id})
         self.db.commit()
@@ -198,6 +216,8 @@ class ProposalService:
         proposal = self.get_proposal(proposal_id)
         self.recalculate(proposal)
         proposal.pdf_url = self.pdf_service.generate(proposal)
+        if proposal.status in {"draft", "under_review", "approved"}:
+            proposal.status = "ready_to_send"
         self._audit("proposal.pdf_generated", proposal, {"pdf_url": proposal.pdf_url})
         self.db.commit()
         self.db.refresh(proposal)
@@ -207,14 +227,111 @@ class ProposalService:
         proposal = self.get_proposal(proposal_id)
         if not proposal.pdf_url:
             proposal.pdf_url = self.pdf_service.generate(proposal)
-        proposal.status = "sent"
-        self._audit("proposal.sent", proposal, {"channel": payload.channel})
-        self.db.commit()
-        return ProposalSendResult(
-            status="simulated",
-            message="Envio simulado. PDF gerado e pronto para envio.",
-            pdf_url=proposal.pdf_url,
+        if proposal.status in {"draft", "under_review", "approved"}:
+            proposal.status = "ready_to_send"
+
+        if payload.channel == "manual":
+            if payload.mark_as_sent:
+                proposal.status = "sent"
+                self._audit("proposal.sent", proposal, {"channel": payload.channel, "manual_confirmation": True})
+            else:
+                self._audit("proposal.send_requested", proposal, {"channel": payload.channel})
+            self.db.commit()
+            return ProposalSendResult(
+                status="sent" if payload.mark_as_sent else "ready",
+                channel=payload.channel,
+                message=(
+                    "PDF gerado e proposta marcada como enviada manualmente."
+                    if payload.mark_as_sent
+                    else "PDF gerado e pronto para envio manual. A proposta nao foi marcada como enviada."
+                ),
+                pdf_url=proposal.pdf_url,
+                sent_at=datetime.now(timezone.utc) if payload.mark_as_sent else None,
+            )
+
+        if payload.channel == "secure_link":
+            public_url = self._public_pdf_url(proposal)
+            if not public_url:
+                self._audit("proposal.send_failed", proposal, {"channel": payload.channel, "reason": "missing_public_pdf_url"})
+                self.db.commit()
+                return ProposalSendResult(
+                    status="error",
+                    channel=payload.channel,
+                    message="PDF gerado, mas nao ha URL publica segura configurada para envio.",
+                    pdf_url=proposal.pdf_url,
+                )
+            self._audit("proposal.secure_link_generated", proposal, {"channel": payload.channel})
+            self.db.commit()
+            return ProposalSendResult(
+                status="ready",
+                channel=payload.channel,
+                message="Link seguro da proposta gerado para revisao e compartilhamento humano.",
+                pdf_url=public_url,
+                delivery_reference=public_url,
+            )
+
+        if payload.channel == "whatsapp":
+            return self._send_whatsapp(proposal, payload)
+        if payload.channel == "email":
+            return self._send_email(proposal, payload)
+        raise ValueError("Unsupported proposal send channel")
+
+    def apply_price_table(self, proposal_id: str) -> Proposal:
+        proposal = self.get_proposal(proposal_id)
+        active_price_items = self._active_price_items()
+        if not active_price_items:
+            raise ValueError("No active price table items configured")
+        for item in list(proposal.items or []):
+            self.db.delete(item)
+        proposal.items = []
+        self._apply_price_items_to_proposal(proposal, active_price_items)
+        proposal.internal_notes = self._append_note(
+            proposal.internal_notes,
+            "Tabela de precos aplicada. Revise valores e condicoes comerciais antes de enviar.",
         )
+        self.recalculate(proposal)
+        self._audit("proposal.price_table_applied", proposal, {"items": len(active_price_items)})
+        self.db.commit()
+        self.db.refresh(proposal)
+        return proposal
+
+    def list_price_items(self, active: bool | None = None) -> list[ProposalPriceItem]:
+        statement = select(ProposalPriceItem).order_by(ProposalPriceItem.sort_order, ProposalPriceItem.category)
+        if active is not None:
+            statement = statement.where(ProposalPriceItem.active == active)
+        return list(self.db.scalars(statement).all())
+
+    def create_price_item(self, payload: ProposalPriceItemCreate) -> ProposalPriceItem:
+        item = ProposalPriceItem(**payload.model_dump())
+        self.db.add(item)
+        self.db.flush()
+        self._audit_price_item("proposal_price_item.created", item)
+        self.db.commit()
+        self.db.refresh(item)
+        return item
+
+    def update_price_item(self, item_id: str, payload: ProposalPriceItemUpdate) -> ProposalPriceItem:
+        item = self._require(ProposalPriceItem, item_id, "Proposal price item not found")
+        for field, value in payload.model_dump(exclude_unset=True).items():
+            setattr(item, field, value)
+        self._audit_price_item("proposal_price_item.updated", item)
+        self.db.commit()
+        self.db.refresh(item)
+        return item
+
+    def set_price_item_active(self, item_id: str, active: bool) -> ProposalPriceItem:
+        item = self._require(ProposalPriceItem, item_id, "Proposal price item not found")
+        item.active = active
+        self._audit_price_item("proposal_price_item.active_changed", item, {"active": active})
+        self.db.commit()
+        self.db.refresh(item)
+        return item
+
+    def delete_price_item(self, item_id: str) -> None:
+        item = self._require(ProposalPriceItem, item_id, "Proposal price item not found")
+        self._audit_price_item("proposal_price_item.deleted", item)
+        self.db.delete(item)
+        self.db.commit()
 
     def recalculate(self, proposal: Proposal) -> None:
         subtotal = 0.0
@@ -242,6 +359,21 @@ class ProposalService:
         proposal.items = [*(proposal.items or []), item]
         return item
 
+    def _apply_price_items_to_proposal(self, proposal: Proposal, price_items: list[ProposalPriceItem]) -> None:
+        for index, price_item in enumerate(price_items):
+            self._add_item_object(
+                proposal,
+                ProposalItemCreate(
+                    category=price_item.category,
+                    description=price_item.description,
+                    quantity=float(price_item.default_quantity or 0),
+                    unit=price_item.default_unit,
+                    unit_price=float(price_item.default_unit_price or 0),
+                    sort_order=price_item.sort_order if price_item.sort_order is not None else index,
+                ),
+                index,
+            )
+
     def _audit(self, action: str, proposal: Proposal, details: dict | None = None) -> None:
         self.db.add(
             AuditLog(
@@ -251,6 +383,172 @@ class ProposalService:
                 entity_id=proposal.id,
                 details={"proposal_number": proposal.proposal_number, **(details or {})},
             )
+        )
+
+    def _audit_price_item(self, action: str, item: ProposalPriceItem, details: dict | None = None) -> None:
+        self.db.add(
+            AuditLog(
+                actor_user_id=self.actor.id if self.actor else None,
+                action=action,
+                entity_type="proposal_price_item",
+                entity_id=item.id,
+                details={"category": item.category, **(details or {})},
+            )
+        )
+
+    def _send_whatsapp(self, proposal: Proposal, payload: ProposalSendRequest) -> ProposalSendResult:
+        public_url = self._public_pdf_url(proposal)
+        if settings.app_env.strip().lower() == "production" and not public_url:
+            self._audit("proposal.send_failed", proposal, {"channel": payload.channel, "reason": "missing_public_pdf_url"})
+            self.db.commit()
+            return ProposalSendResult(
+                status="error",
+                channel=payload.channel,
+                message="PDF gerado, mas nao ha URL publica segura configurada para envio.",
+                pdf_url=proposal.pdf_url,
+            )
+
+        recipient = payload.recipient_phone or proposal.customer_phone
+        if not recipient:
+            self._audit("proposal.send_failed", proposal, {"channel": payload.channel, "reason": "missing_recipient_phone"})
+            self.db.commit()
+            return ProposalSendResult(
+                status="error",
+                channel=payload.channel,
+                message="Informe um telefone do destinatario para enviar por WhatsApp.",
+                pdf_url=proposal.pdf_url,
+            )
+
+        message = payload.message or self._default_proposal_message(proposal, public_url)
+        if settings.app_env.strip().lower() != "production":
+            self._audit("proposal.whatsapp_sent", proposal, {"channel": payload.channel, "simulated": True})
+            self.db.commit()
+            return ProposalSendResult(
+                status="simulated",
+                channel=payload.channel,
+                message="Envio por WhatsApp simulado em development. Em producao, use template aprovado quando necessario.",
+                pdf_url=public_url or proposal.pdf_url,
+                delivery_reference="development-simulation",
+            )
+
+        if payload.use_template and payload.template_name:
+            result = self.whatsapp_service.send_template_message(recipient, payload.template_name)
+        else:
+            result = self.whatsapp_service.send_text_message(recipient, message)
+        if result.get("status") in {"error", "skipped"}:
+            self._audit("proposal.send_failed", proposal, {"channel": payload.channel, "reason": result.get("reason", "send_failed")})
+            self.db.commit()
+            return ProposalSendResult(
+                status="error",
+                channel=payload.channel,
+                message="Nao foi possivel enviar a proposta pelo WhatsApp. Verifique as configuracoes oficiais da Meta.",
+                pdf_url=public_url or proposal.pdf_url,
+            )
+
+        proposal.status = "sent"
+        self._audit("proposal.whatsapp_sent", proposal, {"channel": payload.channel})
+        self._audit("proposal.sent", proposal, {"channel": payload.channel})
+        self.db.commit()
+        return ProposalSendResult(
+            status="sent",
+            channel=payload.channel,
+            message="Proposta enviada pelo WhatsApp.",
+            pdf_url=public_url or proposal.pdf_url,
+            delivery_reference=str(result.get("messages", result.get("id", "whatsapp"))),
+            sent_at=datetime.now(timezone.utc),
+        )
+
+    def _send_email(self, proposal: Proposal, payload: ProposalSendRequest) -> ProposalSendResult:
+        recipient = payload.recipient_email or proposal.customer_email
+        if not recipient:
+            self._audit("proposal.send_failed", proposal, {"channel": payload.channel, "reason": "missing_recipient_email"})
+            self.db.commit()
+            return ProposalSendResult(
+                status="error",
+                channel=payload.channel,
+                message="Informe um e-mail do destinatario para enviar a proposta.",
+                pdf_url=proposal.pdf_url,
+            )
+
+        public_url = self._public_pdf_url(proposal)
+        body = payload.message or self._default_proposal_email_body(proposal, public_url)
+        if settings.app_env.strip().lower() != "production":
+            self._audit("proposal.email_sent", proposal, {"channel": payload.channel, "simulated": True})
+            self.db.commit()
+            return ProposalSendResult(
+                status="simulated",
+                channel=payload.channel,
+                message="Envio por e-mail simulado em development. Configure SMTP para envio real em producao.",
+                pdf_url=public_url or proposal.pdf_url,
+                delivery_reference="development-simulation",
+            )
+
+        result = self.email_service.send_proposal(
+            recipient_email=str(recipient),
+            subject=f"Proposta Solar Solucoes - {proposal.proposal_number}",
+            body=body,
+            attachment_path=proposal.pdf_url if proposal.pdf_url and Path(proposal.pdf_url).exists() else None,
+        )
+        if result.get("status") in {"error", "skipped"}:
+            self._audit("proposal.send_failed", proposal, {"channel": payload.channel, "reason": result.get("reason", "send_failed")})
+            self.db.commit()
+            return ProposalSendResult(
+                status="error",
+                channel=payload.channel,
+                message="Nao foi possivel enviar a proposta por e-mail. Verifique as configuracoes SMTP.",
+                pdf_url=public_url or proposal.pdf_url,
+            )
+
+        proposal.status = "sent"
+        self._audit("proposal.email_sent", proposal, {"channel": payload.channel})
+        self._audit("proposal.sent", proposal, {"channel": payload.channel})
+        self.db.commit()
+        return ProposalSendResult(
+            status="sent",
+            channel=payload.channel,
+            message="Proposta enviada por e-mail.",
+            pdf_url=public_url or proposal.pdf_url,
+            delivery_reference=result.get("reference"),
+            sent_at=datetime.now(timezone.utc),
+        )
+
+    def _public_pdf_url(self, proposal: Proposal) -> str | None:
+        if not proposal.pdf_url or not settings.proposal_public_base_url:
+            return None
+        return f"{str(settings.proposal_public_base_url).rstrip('/')}/{Path(proposal.pdf_url).name}"
+
+    def _active_price_items(self) -> list[ProposalPriceItem]:
+        statement = (
+            select(ProposalPriceItem)
+            .where(ProposalPriceItem.active == True)  # noqa: E712
+            .order_by(ProposalPriceItem.sort_order, ProposalPriceItem.category)
+        )
+        return list(self.db.scalars(statement).all())
+
+    @staticmethod
+    def _append_note(current: str | None, note: str) -> str:
+        if not current:
+            return note
+        return f"{current}\n{note}"
+
+    @staticmethod
+    def _default_proposal_message(proposal: Proposal, public_url: str | None) -> str:
+        link_text = f"\n\nLink seguro: {public_url}" if public_url else ""
+        return (
+            f"Ola, {proposal.customer_name}. A equipe da Solar Solucoes preparou a proposta "
+            f"{proposal.proposal_number} para sua avaliacao.{link_text}\n\n"
+            "Os valores e condicoes estao sujeitos a validacao tecnica e comercial."
+        )
+
+    @staticmethod
+    def _default_proposal_email_body(proposal: Proposal, public_url: str | None) -> str:
+        link_text = f"\n\nLink seguro da proposta: {public_url}" if public_url else ""
+        return (
+            f"Ola, {proposal.customer_name}.\n\n"
+            f"Segue a proposta {proposal.proposal_number} da Solar Solucoes para avaliacao."
+            f"{link_text}\n\n"
+            "Os valores, prazos, economia estimada e condicoes dependem de validacao tecnica e comercial.\n\n"
+            "Atenciosamente,\nSolar Solucoes"
         )
 
     def _find_item(self, proposal: Proposal, item_id: str) -> ProposalItem:

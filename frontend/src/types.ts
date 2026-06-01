@@ -118,10 +118,37 @@ export type Proposal = {
   items: ProposalItem[];
 };
 
+export type ProposalPriceItem = {
+  id: string;
+  category: string;
+  description: string;
+  default_unit: string;
+  default_quantity: number;
+  default_unit_price: number;
+  active: boolean;
+  sort_order: number;
+  notes: string | null;
+  created_at: string;
+  updated_at: string | null;
+};
+
+export type ProposalSendRequest = {
+  channel: "manual" | "whatsapp" | "email" | "secure_link";
+  recipient_phone?: string | null;
+  recipient_email?: string | null;
+  message?: string | null;
+  use_template?: boolean | null;
+  template_name?: string | null;
+  mark_as_sent?: boolean;
+};
+
 export type ProposalSendResult = {
   status: string;
+  channel: string;
   message: string;
   pdf_url: string | null;
+  delivery_reference: string | null;
+  sent_at: string | null;
 };
 
 export type Conversation = {

@@ -532,6 +532,12 @@ input:disabled {
 .proposal-grid input,
 .proposal-item-row input,
 .proposal-item-row select,
+.price-item-form input,
+.price-item-form select,
+.price-item-row input,
+.price-item-row select,
+.proposal-send-grid input,
+.proposal-send-grid select,
 .proposal-financial input,
 .proposal-actions select,
 .proposal-wide-field textarea {
@@ -550,6 +556,46 @@ input:disabled {
   border-radius: 8px;
   padding: 16px;
   background: #ffffff;
+}
+
+.proposal-tabs,
+.proposal-section-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.proposal-tab {
+  border: 1px solid #ccd6e2;
+  border-radius: 999px;
+  padding: 8px 14px;
+  color: #526274;
+  background: #ffffff;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.proposal-tab--active {
+  color: #0b1f33;
+  border-color: #ffcc33;
+  background: #fff4c9;
+}
+
+.proposal-alert {
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.proposal-alert--info {
+  color: #164c7c;
+  background: #e5f1ff;
+}
+
+.proposal-alert--warning {
+  color: #7b5607;
+  background: #fff3cf;
 }
 
 .proposal-detail__header,
@@ -616,6 +662,7 @@ input:disabled {
 }
 
 .proposal-status--approved,
+.proposal-status--ready_to_send,
 .proposal-status--sent,
 .proposal-status--accepted {
   color: #0a6f5a;
@@ -633,6 +680,53 @@ input:disabled {
   margin: 0;
   overflow-wrap: anywhere;
   color: #526274;
+}
+
+.proposal-send-panel,
+.price-table-layout,
+.price-item-form {
+  display: grid;
+  gap: 12px;
+}
+
+.proposal-send-grid,
+.price-item-form {
+  grid-template-columns: repeat(4, minmax(140px, 1fr));
+}
+
+.proposal-send-grid,
+.price-item-form,
+.price-item-row {
+  display: grid;
+  align-items: end;
+  gap: 10px;
+}
+
+.proposal-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  color: #526274;
+  font-weight: 700;
+}
+
+.price-item-form {
+  border: 1px solid #dbe3ed;
+  border-radius: 8px;
+  padding: 14px;
+  background: #ffffff;
+}
+
+.price-item-form strong {
+  align-self: center;
+}
+
+.price-item-row {
+  grid-template-columns: 160px 1fr 82px 82px 118px 90px 150px;
+  min-width: 1050px;
+  padding: 10px 14px;
+  border-bottom: 1px solid #edf1f5;
 }
 
 .score-badge {

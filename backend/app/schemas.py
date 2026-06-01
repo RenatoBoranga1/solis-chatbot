@@ -9,7 +9,17 @@ Channel = Literal["site", "whatsapp", "instagram", "facebook", "admin"]
 SenderType = Literal["customer", "bot", "human"]
 Severity = Literal["baixa", "media", "alta"]
 AnalysisType = Literal["conversation", "lead", "ticket", "daily_dashboard"]
-ProposalStatus = Literal["draft", "under_review", "approved", "sent", "accepted", "rejected", "expired", "canceled"]
+ProposalStatus = Literal[
+    "draft",
+    "under_review",
+    "approved",
+    "ready_to_send",
+    "sent",
+    "accepted",
+    "rejected",
+    "expired",
+    "canceled",
+]
 
 
 class TokenOut(BaseModel):
@@ -355,6 +365,44 @@ class ProposalItemOut(ProposalItemBase):
     model_config = ConfigDict(from_attributes=True)
 
 
+class ProposalPriceItemBase(BaseModel):
+    category: str
+    description: str
+    default_unit: str = "un"
+    default_quantity: float = 1
+    default_unit_price: float = 0
+    active: bool = True
+    sort_order: int = 0
+    notes: str | None = None
+
+
+class ProposalPriceItemCreate(ProposalPriceItemBase):
+    pass
+
+
+class ProposalPriceItemUpdate(BaseModel):
+    category: str | None = None
+    description: str | None = None
+    default_unit: str | None = None
+    default_quantity: float | None = None
+    default_unit_price: float | None = None
+    active: bool | None = None
+    sort_order: int | None = None
+    notes: str | None = None
+
+
+class ProposalPriceItemOut(ProposalPriceItemBase):
+    id: str
+    created_at: datetime
+    updated_at: datetime | None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ProposalPriceItemActivePatch(BaseModel):
+    active: bool
+
+
 class ProposalBase(BaseModel):
     customer_id: str | None = None
     lead_id: str | None = None
@@ -421,11 +469,19 @@ class ProposalStatusUpdate(BaseModel):
 
 
 class ProposalSendRequest(BaseModel):
-    channel: Literal["whatsapp", "email", "manual"] = "manual"
+    channel: Literal["manual", "whatsapp", "email", "secure_link"] = "manual"
+    recipient_phone: str | None = None
+    recipient_email: EmailStr | None = None
     message: str | None = None
+    use_template: bool | None = None
+    template_name: str | None = None
+    mark_as_sent: bool = False
 
 
 class ProposalSendResult(BaseModel):
     status: str
+    channel: str
     message: str
     pdf_url: str | None = None
+    delivery_reference: str | None = None
+    sent_at: datetime | None = None

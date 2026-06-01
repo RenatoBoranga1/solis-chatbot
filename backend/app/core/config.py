@@ -37,6 +37,24 @@ class Settings(BaseSettings):
     attachment_storage: str = "local"
     attachment_base_url: AnyHttpUrl | str = "http://localhost:8000/uploads"
     proposal_storage_path: str = "storage/proposals"
+    proposal_public_base_url: AnyHttpUrl | str | None = None
+
+    company_name: str = "Solar Solucoes"
+    company_phone: str | None = None
+    company_email: str | None = None
+    company_website: AnyHttpUrl | str = "https://solarsolucoes.com.br"
+    company_address: str | None = None
+    company_logo_path: str | None = None
+    company_primary_color: str = "#FFCC33"
+    company_secondary_color: str = "#0B1F33"
+
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_user: str | None = None
+    smtp_password: str | None = None
+    smtp_from_email: str | None = None
+    smtp_from_name: str = "Solar Solucoes"
+    smtp_use_tls: bool = True
 
     rate_limit_per_minute: int = 80
     log_level: str = "INFO"

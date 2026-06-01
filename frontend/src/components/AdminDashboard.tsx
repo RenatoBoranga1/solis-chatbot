@@ -20,7 +20,18 @@ import {
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 
 import { adminApi, login } from "../api";
-import type { AIAnalysis, Conversation, DashboardAIInsights, DashboardMetrics, KnowledgeArticle, Lead, Proposal, Ticket } from "../types";
+import type {
+  AIAnalysis,
+  Conversation,
+  DashboardAIInsights,
+  DashboardMetrics,
+  KnowledgeArticle,
+  Lead,
+  Proposal,
+  ProposalPriceItem,
+  ProposalSendRequest,
+  Ticket,
+} from "../types";
 
 type AdminData = {
   metrics: DashboardMetrics | null;
@@ -28,6 +39,7 @@ type AdminData = {
   conversations: Conversation[];
   leads: Lead[];
   proposals: Proposal[];
+  proposalPriceItems: ProposalPriceItem[];
   tickets: Ticket[];
   knowledge: KnowledgeArticle[];
 };
@@ -38,6 +50,7 @@ const emptyData: AdminData = {
   conversations: [],
   leads: [],
   proposals: [],
+  proposalPriceItems: [],
   tickets: [],
   knowledge: [],
 };
@@ -82,16 +95,17 @@ export function AdminDashboard() {
       setLoading(true);
       setError(null);
       try {
-        const [metrics, aiInsights, conversations, leads, proposals, tickets, knowledge] = await Promise.all([
+        const [metrics, aiInsights, conversations, leads, proposals, proposalPriceItems, tickets, knowledge] = await Promise.all([
           adminApi.metrics(currentToken),
           adminApi.aiInsights(currentToken),
           adminApi.conversations(currentToken),
           adminApi.leads(currentToken),
           adminApi.proposals(currentToken),
+          adminApi.proposalPriceItems(currentToken),
           adminApi.tickets(currentToken),
           adminApi.knowledge(currentToken),
         ]);
-        setData({ metrics, aiInsights, conversations, leads, proposals, tickets, knowledge });
+        setData({ metrics, aiInsights, conversations, leads, proposals, proposalPriceItems, tickets, knowledge });
       } catch (loadError) {
         setError("Não foi possível carregar o painel. Verifique o login e a API.");
       } finally {
@@ -304,11 +318,25 @@ export function AdminDashboard() {
     }
   }
 
-  async function handleSendProposal(id: string) {
+  async function handleApplyProposalPriceTable(id: string) {
+    if (!token) return;
+    setProposalLoadingKey(`price-table:${id}`);
+    try {
+      const updated = await adminApi.applyProposalPriceTable(token, id);
+      setSelectedProposal(updated);
+      await loadData();
+    } catch (priceTableError) {
+      setError("Nao foi possivel aplicar a tabela de precos. Verifique se existem itens ativos configurados.");
+    } finally {
+      setProposalLoadingKey(null);
+    }
+  }
+
+  async function handleSendProposal(id: string, payload: ProposalSendRequest) {
     if (!token) return;
     setProposalLoadingKey(`send:${id}`);
     try {
-      const result = await adminApi.sendProposal(token, id);
+      const result = await adminApi.sendProposal(token, id, payload);
       setError(result.message);
       const updated = await adminApi.getProposal(token, id);
       setSelectedProposal(updated);
@@ -316,6 +344,30 @@ export function AdminDashboard() {
     } finally {
       setProposalLoadingKey(null);
     }
+  }
+
+  async function handleCreatePriceItem(payload: Partial<ProposalPriceItem>) {
+    if (!token) return;
+    await adminApi.createProposalPriceItem(token, payload);
+    await loadData();
+  }
+
+  async function handleUpdatePriceItem(id: string, payload: Partial<ProposalPriceItem>) {
+    if (!token) return;
+    await adminApi.updateProposalPriceItem(token, id, payload);
+    await loadData();
+  }
+
+  async function handleTogglePriceItem(id: string, active: boolean) {
+    if (!token) return;
+    await adminApi.updateProposalPriceItemActive(token, id, active);
+    await loadData();
+  }
+
+  async function handleDeletePriceItem(id: string) {
+    if (!token) return;
+    await adminApi.deleteProposalPriceItem(token, id);
+    await loadData();
   }
 
   function copySuggestedReply(text: string) {
@@ -425,6 +477,7 @@ export function AdminDashboard() {
         {activeView === "propostas" && (
           <ProposalsView
             proposals={data.proposals}
+            priceItems={data.proposalPriceItems}
             selectedProposal={selectedProposal}
             loadingKey={proposalLoadingKey}
             onCreateManual={handleCreateManualProposal}
@@ -435,7 +488,12 @@ export function AdminDashboard() {
             onUpdateItem={handleUpdateProposalItem}
             onDeleteItem={handleDeleteProposalItem}
             onGeneratePdf={handleGenerateProposalPdf}
+            onApplyPriceTable={handleApplyProposalPriceTable}
             onSend={handleSendProposal}
+            onCreatePriceItem={handleCreatePriceItem}
+            onUpdatePriceItem={handleUpdatePriceItem}
+            onTogglePriceItem={handleTogglePriceItem}
+            onDeletePriceItem={handleDeletePriceItem}
           />
         )}
         {activeView === "chamados" && (
@@ -505,6 +563,7 @@ const PROPOSAL_STATUSES = [
   { value: "draft", label: "Rascunho" },
   { value: "under_review", label: "Em revisão" },
   { value: "approved", label: "Aprovada" },
+  { value: "ready_to_send", label: "Pronta para envio" },
   { value: "sent", label: "Enviada" },
   { value: "accepted", label: "Aceita" },
   { value: "rejected", label: "Rejeitada" },
@@ -831,6 +890,7 @@ function LeadsView({
 
 function ProposalsView({
   proposals,
+  priceItems,
   selectedProposal,
   loadingKey,
   onCreateManual,
@@ -841,9 +901,15 @@ function ProposalsView({
   onUpdateItem,
   onDeleteItem,
   onGeneratePdf,
+  onApplyPriceTable,
   onSend,
+  onCreatePriceItem,
+  onUpdatePriceItem,
+  onTogglePriceItem,
+  onDeletePriceItem,
 }: {
   proposals: Proposal[];
+  priceItems: ProposalPriceItem[];
   selectedProposal: Proposal | null;
   loadingKey: string | null;
   onCreateManual: () => Promise<void>;
@@ -854,18 +920,47 @@ function ProposalsView({
   onUpdateItem: (proposalId: string, itemId: string, payload: Record<string, unknown>) => Promise<void>;
   onDeleteItem: (proposalId: string, itemId: string) => Promise<void>;
   onGeneratePdf: (id: string) => Promise<void>;
-  onSend: (id: string) => Promise<void>;
+  onApplyPriceTable: (id: string) => Promise<void>;
+  onSend: (id: string, payload: ProposalSendRequest) => Promise<void>;
+  onCreatePriceItem: (payload: Partial<ProposalPriceItem>) => Promise<void>;
+  onUpdatePriceItem: (id: string, payload: Partial<ProposalPriceItem>) => Promise<void>;
+  onTogglePriceItem: (id: string, active: boolean) => Promise<void>;
+  onDeletePriceItem: (id: string) => Promise<void>;
 }) {
   const [filters, setFilters] = useState({ status: "", city: "", customer: "" });
+  const [activeTab, setActiveTab] = useState<"proposals" | "prices">("proposals");
+  const [sendDraft, setSendDraft] = useState<ProposalSendRequest>({ channel: "manual", mark_as_sent: false });
   const filtered = proposals.filter((proposal) => {
     const byStatus = !filters.status || proposal.status === filters.status;
     const byCity = !filters.city || (proposal.city ?? "").toLowerCase().includes(filters.city.toLowerCase());
     const byCustomer = !filters.customer || proposal.customer_name.toLowerCase().includes(filters.customer.toLowerCase());
     return byStatus && byCity && byCustomer;
   });
+  const hasZeroValues = selectedProposal?.items.length ? selectedProposal.items.every((item) => Number(item.unit_price) === 0) : false;
 
   return (
     <section className="proposals-layout">
+      <div className="proposal-tabs">
+        <button className={activeTab === "proposals" ? "proposal-tab proposal-tab--active" : "proposal-tab"} onClick={() => setActiveTab("proposals")}>
+          Propostas
+        </button>
+        <button className={activeTab === "prices" ? "proposal-tab proposal-tab--active" : "proposal-tab"} onClick={() => setActiveTab("prices")}>
+          Tabela de precos
+        </button>
+      </div>
+
+      {activeTab === "prices" && (
+        <PriceTablePanel
+          priceItems={priceItems}
+          onCreate={onCreatePriceItem}
+          onUpdate={onUpdatePriceItem}
+          onToggle={onTogglePriceItem}
+          onDelete={onDeletePriceItem}
+        />
+      )}
+
+      {activeTab === "proposals" && (
+        <>
       <div className="table-panel proposal-list">
         <div className="proposal-toolbar">
           <div className="proposal-filters">
@@ -900,11 +995,7 @@ function ProposalsView({
               </button>
               <button className="text-button" onClick={() => onGeneratePdf(proposal.id)} disabled={loadingKey === `pdf:${proposal.id}`}>
                 <FileText size={15} />
-                PDF
-              </button>
-              <button className="text-button text-button--proposal" onClick={() => onSend(proposal.id)} disabled={loadingKey === `send:${proposal.id}`}>
-                <Send size={15} />
-                Enviar
+                {proposal.pdf_url ? "PDF gerado" : "PDF"}
               </button>
             </div>
           </div>
@@ -920,6 +1011,15 @@ function ProposalsView({
             </div>
             <ProposalStatusPill status={selectedProposal.status} />
           </div>
+
+          <div className="proposal-alert proposal-alert--info">
+            Esta proposta e um rascunho comercial. Revise todos os valores, prazos, economia estimada e condicoes antes de enviar.
+          </div>
+          {hasZeroValues && (
+            <div className="proposal-alert proposal-alert--warning">
+              Os valores ainda nao foram preenchidos. Configure a tabela de precos ou edite os itens manualmente.
+            </div>
+          )}
 
           <div className="proposal-grid">
             <label>
@@ -967,10 +1067,16 @@ function ProposalsView({
           <div className="proposal-items">
             <div className="proposal-section-title">
               <strong>Itens da proposta</strong>
-              <button className="text-button" onClick={() => onAddItem(selectedProposal.id)}>
-                <Plus size={15} />
-                Item
-              </button>
+              <div className="proposal-section-actions">
+                <button className="text-button" onClick={() => onApplyPriceTable(selectedProposal.id)} disabled={loadingKey === `price-table:${selectedProposal.id}`}>
+                  <RefreshCw size={15} />
+                  Aplicar tabela de precos
+                </button>
+                <button className="text-button" onClick={() => onAddItem(selectedProposal.id)}>
+                  <Plus size={15} />
+                  Item
+                </button>
+              </div>
             </div>
             {selectedProposal.items.map((item) => (
               <div className="proposal-item-row" key={item.id}>
@@ -1025,17 +1131,154 @@ function ProposalsView({
             </select>
             <button className="secondary-button" onClick={() => onGeneratePdf(selectedProposal.id)}>
               <FileText size={16} />
-              Gerar PDF
-            </button>
-            <button className="primary-button" onClick={() => onSend(selectedProposal.id)}>
-              <Send size={16} />
-              Enviar proposta
+              {selectedProposal.pdf_url ? "Gerar novo PDF" : "Gerar PDF"}
             </button>
           </div>
           {selectedProposal.pdf_url && <p className="proposal-pdf-path">PDF: {selectedProposal.pdf_url}</p>}
+
+          <div className="proposal-send-panel">
+            <div className="proposal-section-title">
+              <strong>Enviar proposta</strong>
+              <span>Escolha o canal antes de solicitar envio.</span>
+            </div>
+            <div className="proposal-send-grid">
+              <label>
+                Canal
+                <select
+                  value={sendDraft.channel}
+                  onChange={(event) => setSendDraft((current) => ({ ...current, channel: event.target.value as ProposalSendRequest["channel"] }))}
+                >
+                  <option value="manual">Manual</option>
+                  <option value="whatsapp">WhatsApp</option>
+                  <option value="email">E-mail</option>
+                  <option value="secure_link">Link seguro</option>
+                </select>
+              </label>
+              <label>
+                Telefone
+                <input
+                  value={sendDraft.recipient_phone ?? selectedProposal.customer_phone ?? ""}
+                  onChange={(event) => setSendDraft((current) => ({ ...current, recipient_phone: event.target.value }))}
+                />
+              </label>
+              <label>
+                E-mail
+                <input
+                  value={sendDraft.recipient_email ?? selectedProposal.customer_email ?? ""}
+                  onChange={(event) => setSendDraft((current) => ({ ...current, recipient_email: event.target.value }))}
+                />
+              </label>
+              <label className="proposal-checkbox">
+                <input
+                  type="checkbox"
+                  checked={Boolean(sendDraft.mark_as_sent)}
+                  onChange={(event) => setSendDraft((current) => ({ ...current, mark_as_sent: event.target.checked }))}
+                />
+                Marcar manual como enviada
+              </label>
+            </div>
+            <label className="proposal-wide-field">
+              Mensagem opcional
+              <textarea
+                value={sendDraft.message ?? ""}
+                onChange={(event) => setSendDraft((current) => ({ ...current, message: event.target.value }))}
+                placeholder="Mensagem curta para o cliente. Deixe em branco para usar o texto padrao."
+              />
+            </label>
+            <button className="primary-button" onClick={() => onSend(selectedProposal.id, sendDraft)} disabled={loadingKey === `send:${selectedProposal.id}`}>
+              <Send size={16} />
+              {loadingKey === `send:${selectedProposal.id}` ? "Enviando" : "Solicitar envio"}
+            </button>
+          </div>
         </article>
       )}
+        </>
+      )}
     </section>
+  );
+}
+
+function PriceTablePanel({
+  priceItems,
+  onCreate,
+  onUpdate,
+  onToggle,
+  onDelete,
+}: {
+  priceItems: ProposalPriceItem[];
+  onCreate: (payload: Partial<ProposalPriceItem>) => Promise<void>;
+  onUpdate: (id: string, payload: Partial<ProposalPriceItem>) => Promise<void>;
+  onToggle: (id: string, active: boolean) => Promise<void>;
+  onDelete: (id: string) => Promise<void>;
+}) {
+  const [draft, setDraft] = useState({
+    category: "kit_fotovoltaico",
+    description: "",
+    default_unit: "un",
+    default_quantity: 1,
+    default_unit_price: 0,
+    sort_order: 0,
+    notes: "",
+  });
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!draft.description.trim()) return;
+    await onCreate({ ...draft, active: true, notes: draft.notes || null });
+    setDraft({ category: "kit_fotovoltaico", description: "", default_unit: "un", default_quantity: 1, default_unit_price: 0, sort_order: 0, notes: "" });
+  }
+
+  return (
+    <div className="price-table-layout">
+      <form className="price-item-form" onSubmit={submit}>
+        <strong>Novo item da tabela</strong>
+        <select value={draft.category} onChange={(event) => setDraft((current) => ({ ...current, category: event.target.value }))}>
+          {PROPOSAL_ITEM_CATEGORIES.map((category) => (
+            <option key={category.value} value={category.value}>
+              {category.label}
+            </option>
+          ))}
+        </select>
+        <input placeholder="Descricao" value={draft.description} onChange={(event) => setDraft((current) => ({ ...current, description: event.target.value }))} />
+        <input placeholder="Unidade" value={draft.default_unit} onChange={(event) => setDraft((current) => ({ ...current, default_unit: event.target.value }))} />
+        <input type="number" step="0.001" value={draft.default_quantity} onChange={(event) => setDraft((current) => ({ ...current, default_quantity: Number(event.target.value) || 0 }))} />
+        <input type="number" step="0.01" value={draft.default_unit_price} onChange={(event) => setDraft((current) => ({ ...current, default_unit_price: Number(event.target.value) || 0 }))} />
+        <input type="number" value={draft.sort_order} onChange={(event) => setDraft((current) => ({ ...current, sort_order: Number(event.target.value) || 0 }))} />
+        <input placeholder="Observacoes internas" value={draft.notes} onChange={(event) => setDraft((current) => ({ ...current, notes: event.target.value }))} />
+        <button className="primary-button" type="submit">
+          <Plus size={16} />
+          Adicionar item
+        </button>
+      </form>
+
+      <div className="table-panel">
+        <TableHeader columns={["Categoria", "Descricao", "Qtd", "Un", "Unitario", "Status", "Acoes"]} />
+        {priceItems.map((item) => (
+          <div className="price-item-row" key={item.id}>
+            <select defaultValue={item.category} onBlur={(event) => onUpdate(item.id, { category: event.target.value })}>
+              {PROPOSAL_ITEM_CATEGORIES.map((category) => (
+                <option key={category.value} value={category.value}>
+                  {category.label}
+                </option>
+              ))}
+            </select>
+            <input defaultValue={item.description} onBlur={(event) => onUpdate(item.id, { description: event.target.value })} />
+            <input type="number" step="0.001" defaultValue={item.default_quantity} onBlur={(event) => onUpdate(item.id, { default_quantity: Number(event.target.value) || 0 })} />
+            <input defaultValue={item.default_unit} onBlur={(event) => onUpdate(item.id, { default_unit: event.target.value })} />
+            <input type="number" step="0.01" defaultValue={item.default_unit_price} onBlur={(event) => onUpdate(item.id, { default_unit_price: Number(event.target.value) || 0 })} />
+            <span className={item.active ? "status-badge status-badge--open" : "status-badge"}>{item.active ? "Ativo" : "Inativo"}</span>
+            <div className="row-actions">
+              <button className="text-button" onClick={() => onToggle(item.id, !item.active)}>
+                {item.active ? "Inativar" : "Ativar"}
+              </button>
+              <button className="icon-button" onClick={() => onDelete(item.id)} aria-label="Excluir item de preco">
+                <Trash2 size={15} />
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 

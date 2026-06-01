@@ -291,6 +291,20 @@ class ProposalItem(Base, TimestampMixin):
     proposal: Mapped[Proposal] = relationship(back_populates="items")
 
 
+class ProposalPriceItem(Base, TimestampMixin):
+    __tablename__ = "proposal_price_items"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    category: Mapped[str] = mapped_column(String(80), index=True, nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    default_unit: Mapped[str] = mapped_column(String(40), default="un", nullable=False)
+    default_quantity: Mapped[float] = mapped_column(Numeric(12, 3), default=1, nullable=False)
+    default_unit_price: Mapped[float] = mapped_column(Numeric(12, 2), default=0, nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, index=True, nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text)
+
+
 class KnowledgeBaseArticle(Base, TimestampMixin):
     __tablename__ = "knowledge_base_articles"
 

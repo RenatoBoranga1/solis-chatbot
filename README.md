@@ -19,6 +19,7 @@ O projeto esta organizado como um monorepo simples:
 - Leads comerciais com status `Novo orçamento`.
 - Propostas comerciais com rascunho a partir de leads, itens editáveis, PDF e envio simulado.
 - Chamados técnicos com gravidade baixa, média ou alta.
+- Tabela de precos configuravel para propostas e PDF comercial com visual premium.
 - Transferencia para humano em casos graves, complexos, comerciais estrategicos ou sem resposta confiavel.
 - Base de conhecimento administravel e pronta para RAG.
 - Base multimidia com videos oficiais, PDFs, manuais e links de apoio seguros.
@@ -128,7 +129,13 @@ Propostas:
 - `PUT /proposals/{id}/items/{item_id}`
 - `DELETE /proposals/{id}/items/{item_id}`
 - `POST /proposals/{id}/generate-pdf`
+- `POST /proposals/{id}/apply-price-table`
 - `POST /proposals/{id}/send`
+- `GET /proposal-price-items`
+- `POST /proposal-price-items`
+- `PUT /proposal-price-items/{id}`
+- `PATCH /proposal-price-items/{id}/active`
+- `DELETE /proposal-price-items/{id}`
 
 Tickets:
 
@@ -332,6 +339,20 @@ Pontos importantes:
 
 Guia completo: [`docs/proposals.md`](docs/proposals.md).
 
+### Evolucao profissional de propostas
+
+- A aba `Tabela de precos` permite cadastrar itens base por categoria, quantidade, unidade e valor unitario.
+- Propostas geradas por lead usam a tabela ativa quando existir; se nao houver tabela, os itens entram zerados para revisao manual.
+- O bot e a IA nao definem preco final sozinhos.
+- O botao `Aplicar tabela de precos` recalcula uma proposta existente com os itens ativos configurados.
+- O PDF premium usa dados da empresa, capa visual, resumo tecnico, tabela de itens, resumo financeiro, avisos comerciais e rodape.
+- Configure `COMPANY_NAME`, `COMPANY_PHONE`, `COMPANY_EMAIL`, `COMPANY_WEBSITE`, `COMPANY_ADDRESS`, `COMPANY_LOGO_PATH`, `COMPANY_PRIMARY_COLOR` e `COMPANY_SECONDARY_COLOR`.
+- O envio suporta `manual`, `whatsapp`, `email` e `secure_link`.
+- Em desenvolvimento, envios por WhatsApp e e-mail sao simulados.
+- Envio manual nao marca como `sent` automaticamente, salvo quando `mark_as_sent=true`.
+- Em producao, envio por e-mail usa SMTP (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM_EMAIL`, `SMTP_FROM_NAME`).
+- Para WhatsApp ou link seguro, configure `PROPOSAL_PUBLIC_BASE_URL`; o sistema nao envia caminho local do PDF ao cliente.
+
 ## LGPD
 
 O chatbot informa a finalidade antes de coletar dados pessoais. O backend inclui campos de consentimento, trilha de auditoria e estrutura para exclusao/alteracao sob solicitacao. Em producao, configure:
@@ -350,7 +371,7 @@ cd backend
 python -m unittest discover tests
 ```
 
-Os testes cobrem classificacao de intencao, gravidade, validacao do webhook, assinatura da Meta, deduplicacao, anexos, auditoria `WebhookEvent`, continuidade site -> WhatsApp e falhas de envio.
+Os testes cobrem classificacao de intencao, gravidade, validacao do webhook, assinatura da Meta, deduplicacao, anexos, auditoria `WebhookEvent`, continuidade site -> WhatsApp, propostas comerciais, tabela de precos e falhas de envio.
 
 ## Deploy sugerido
 
