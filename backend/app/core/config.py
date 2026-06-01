@@ -36,6 +36,7 @@ class Settings(BaseSettings):
 
     attachment_storage: str = "local"
     attachment_base_url: AnyHttpUrl | str = "http://localhost:8000/uploads"
+    proposal_storage_path: str = "storage/proposals"
 
     rate_limit_per_minute: int = 80
     log_level: str = "INFO"

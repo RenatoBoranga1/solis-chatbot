@@ -19,6 +19,7 @@ Use este checklist antes de homologar ou publicar o Solis Chatbot com WhatsApp C
 - Configurar `WHATSAPP_BUSINESS_ACCOUNT_ID`.
 - Configurar `WHATSAPP_VERIFY_TOKEN`.
 - Configurar `WHATSAPP_APP_SECRET`.
+- Criar e aprovar template `continuar_atendimento_site` no WhatsApp Manager para convites iniciados pela empresa.
 - Configurar callback `https://seu-dominio.com/webhook/whatsapp` na Meta.
 - Assinar o campo `messages`.
 - Validar `GET /webhook/whatsapp` no painel da Meta.
@@ -47,6 +48,35 @@ Confirmar tabelas:
 - `webhook_events`;
 - `attachments`.
 - `ai_analyses`.
+- `knowledge_base_articles` com campos de vídeo e material de apoio.
+- `conversation_channel_links`.
+- `proposals`.
+- `proposal_items`.
+
+## Omnichannel
+
+- Testar `POST /chat/conversations/{conversation_id}/continue-whatsapp`.
+- Confirmar que casos de alta gravidade exigem revisão humana.
+- Confirmar que telefones estão normalizados apenas com dígitos.
+- Confirmar que resposta `SIM` no WhatsApp cria conversa vinculada ao atendimento do site.
+- Monitorar links com status `failed`, `expired` ou `pending` antigo.
+
+## Propostas comerciais
+
+- Configurar `PROPOSAL_STORAGE_PATH`.
+- Garantir que a pasta de PDFs tenha backup e controle de acesso.
+- Revisar permissões dos perfis `admin`, `comercial` e `gestor`.
+- Validar geração de PDF antes da homologação.
+- Em produção, armazenar PDFs em storage privado, como S3 ou Cloudflare R2.
+- Para envio por WhatsApp fora da janela de 24 horas, criar template aprovado pela Meta.
+- Reforçar processo interno de revisão humana antes de enviar proposta ao cliente.
+
+## Base multimídia
+
+- Substituir placeholders de vídeos do seed por links oficiais.
+- Revisar artigos antes de ativar `send_video_with_answer`.
+- Não ativar vídeo automático para instruções com risco elétrico.
+- Conferir preview da resposta no painel.
 
 ## Testes
 
@@ -55,7 +85,7 @@ cd backend
 python -m unittest discover tests
 ```
 
-Os testes devem cobrir webhook, assinatura, deduplicacao, anexos, auditoria, `send_errors`, classificacao de gravidade e handoff.
+Os testes devem cobrir webhook, assinatura, deduplicacao, anexos, auditoria, `send_errors`, continuidade omnichannel, classificacao de gravidade e handoff.
 Também devem cobrir análise por regras, lead quente, chamado crítico, resposta sugerida e endpoints de IA.
 
 ## Observabilidade e seguranca
@@ -72,5 +102,6 @@ Também devem cobrir análise por regras, lead quente, chamado crítico, respost
 
 - Processar webhooks em fila/worker com Redis.
 - Armazenar midias em S3, R2 ou storage equivalente.
+- Armazenar PDFs de propostas em storage privado com URL temporária.
 - Criar templates oficiais para mensagens fora da janela de 24 horas.
 - Adicionar CI/CD com testes e migrations em release.

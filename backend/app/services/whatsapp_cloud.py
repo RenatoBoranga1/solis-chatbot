@@ -67,6 +67,38 @@ class WhatsAppCloudService:
             logger.exception("Failed to send WhatsApp text message.")
             return {"status": "error", "reason": "send_failed"}
 
+    def send_template_message(
+        self,
+        to: str,
+        template_name: str,
+        language_code: str = "pt_BR",
+    ) -> dict:
+        if not self._is_configured():
+            logger.warning("WhatsApp template send skipped because access token or phone number id is not configured.")
+            return {"status": "skipped", "reason": "missing_whatsapp_config"}
+
+        payload = {
+            "messaging_product": "whatsapp",
+            "to": to,
+            "type": "template",
+            "template": {
+                "name": template_name,
+                "language": {"code": language_code},
+            },
+        }
+        try:
+            with httpx.Client(timeout=15) as client:
+                response = client.post(
+                    f"{self.base_url}/{self.phone_number_id}/messages",
+                    headers=self._headers(),
+                    json=payload,
+                )
+                response.raise_for_status()
+                return response.json()
+        except httpx.HTTPError:
+            logger.exception("Failed to send WhatsApp template message.")
+            return {"status": "error", "reason": "template_send_failed"}
+
     def mark_message_as_read(self, message_id: str) -> dict:
         if not self._is_configured():
             return {"status": "skipped", "reason": "missing_whatsapp_config"}

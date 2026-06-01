@@ -130,6 +130,18 @@ Para `image`, `document` e `audio`, o parser preenche:
 
 O `ConversationService` mantem `attachment_url` em `messages` por compatibilidade e cria tambem um registro do modelo `Attachment` em `attachments` com `provider`, `provider_media_id`, `file_type`, `file_url`, `message_id` e `conversation_id`.
 
+## 8.1. Links de vídeos e materiais da base
+
+Quando a base de conhecimento tiver vídeo ou material de apoio com envio automático ativado, o WhatsApp recebe o link em texto simples, sem HTML ou Markdown complexo:
+
+```text
+Vídeo recomendado:
+Como limpar placas solares com segurança
+https://youtu.be/...
+```
+
+Use essa opção apenas com materiais oficiais e seguros. Em risco elétrico, o bot bloqueia sugestão de vídeo e prioriza encaminhamento humano.
+
 ## 9. Erro de envio
 
 O envio usa:
@@ -155,7 +167,25 @@ Em `APP_ENV=development`, a ausencia de `WHATSAPP_APP_SECRET` e permitida para t
 
 Dentro da janela de atendimento de 24 horas iniciada pelo cliente, a empresa pode responder livremente. Fora dessa janela, mensagens iniciadas pela empresa exigem templates aprovados no WhatsApp Manager.
 
-## 12. Checklist de producao
+## 12. Continuidade do site para WhatsApp
+
+O Solis também permite migrar um atendimento iniciado no widget do site para o WhatsApp oficial. O painel chama:
+
+```text
+POST /chat/conversations/{conversation_id}/continue-whatsapp
+```
+
+Esse endpoint cria um vínculo em `conversation_channel_links`, envia ou simula o convite e aguarda confirmação do cliente. Quando o WhatsApp recebe `SIM`, `ok`, `confirmo` ou resposta equivalente do mesmo telefone, o webhook confirma o vínculo, cria a conversa WhatsApp e herda contexto do site:
+
+- `collected_data`;
+- `summary`;
+- `intent`;
+- `severity`;
+- vínculo com lead ou chamado.
+
+Em desenvolvimento, se `WHATSAPP_ACCESS_TOKEN` e `WHATSAPP_PHONE_NUMBER_ID` não estiverem configurados, o convite é simulado. Em produção, esse convite deve usar template aprovado pela Meta, porque a empresa está iniciando a conversa.
+
+## 13. Checklist de producao
 
 Checklist de ativação real:
 

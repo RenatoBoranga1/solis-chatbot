@@ -5,8 +5,9 @@ from sqlalchemy.orm import Session, selectinload
 from app.api.deps import get_current_user
 from app.db.session import get_db
 from app.models import Conversation
-from app.schemas import AssignIn, ChatMessageIn, ChatMessageOut, ConversationOut, HandoffIn
+from app.schemas import AssignIn, ChatMessageIn, ChatMessageOut, ContinueWhatsAppIn, ContinueWhatsAppOut, ConversationOut, HandoffIn
 from app.services.conversation import ConversationService
+from app.services.omnichannel import OmnichannelService
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
 
@@ -28,7 +29,7 @@ def list_conversations(
     return list(
         db.scalars(
             select(Conversation)
-            .options(selectinload(Conversation.messages))
+            .options(selectinload(Conversation.messages), selectinload(Conversation.outbound_channel_links))
             .order_by(desc(Conversation.created_at))
             .limit(200)
         ).all()
@@ -44,7 +45,11 @@ def get_conversation(
     conversation = db.scalar(
         select(Conversation)
         .where(Conversation.id == conversation_id)
-        .options(selectinload(Conversation.messages))
+        .options(
+            selectinload(Conversation.messages),
+            selectinload(Conversation.outbound_channel_links),
+            selectinload(Conversation.inbound_channel_links),
+        )
     )
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
@@ -66,6 +71,22 @@ def handoff(
     return {"id": handoff_record.id, "status": "handoff"}
 
 
+@router.post("/conversations/{conversation_id}/continue-whatsapp", response_model=ContinueWhatsAppOut)
+def continue_whatsapp(
+    conversation_id: str,
+    payload: ContinueWhatsAppIn,
+    db: Session = Depends(get_db),
+    _current_user=Depends(get_current_user),
+) -> ContinueWhatsAppOut:
+    service = OmnichannelService(db)
+    try:
+        return service.continue_on_whatsapp(conversation_id, payload)
+    except PermissionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.post("/conversations/{conversation_id}/assign", response_model=ConversationOut)
 def assign(
     conversation_id: str,
@@ -78,4 +99,3 @@ def assign(
         return service.assign_conversation(conversation_id, payload.user_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-

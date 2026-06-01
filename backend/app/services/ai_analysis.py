@@ -15,6 +15,7 @@ from app.models import AIAnalysis, AuditLog, Conversation, Handoff, Lead, Messag
 from app.schemas import DashboardAIInsights
 from app.services.ai_prompts import AI_ANALYSIS_SYSTEM_PROMPT
 from app.services.intent import classify_intent, normalize
+from app.services.rag import KnowledgeService
 from app.services.severity import is_electrical_risk
 
 logger = logging.getLogger(__name__)
@@ -31,6 +32,7 @@ class AIAnalysisService:
     def __init__(self, db: Session, actor_user_id: str | None = None):
         self.db = db
         self.actor_user_id = actor_user_id
+        self.knowledge = KnowledgeService(db)
 
     def analyze_conversation(self, conversation_id: str) -> AIAnalysis:
         conversation = self._require(Conversation, conversation_id, "Conversation not found")
@@ -146,6 +148,11 @@ class AIAnalysisService:
         next_action = self._conversation_next_action(intent, urgency, missing_data, lead, ticket)
         summary = self._conversation_summary(conversation, intent, urgency, sentiment)
         suggested_reply = self._suggested_reply(intent, urgency, missing_data, technical_risk)
+        media_action, media_reply = self._multimedia_recommendation(text, technical_risk)
+        if media_action:
+            next_action = f"{next_action} {media_action}"
+        if media_reply:
+            suggested_reply = f"{suggested_reply}\n\n{media_reply}"
         tags = self._tags(intent, sentiment, urgency, commercial_opportunity, technical_risk)
         return self._sanitize_payload(
             {
@@ -179,6 +186,8 @@ class AIAnalysisService:
         next_action = "Solicitar a conta de energia e encaminhar para proposta comercial." if missing_data else "Encaminhar para proposta comercial."
         if lead.financing_interest:
             next_action = "Priorizar contato comercial e apresentar possibilidades de financiamento após análise da conta."
+        if score >= 75 and not missing_data:
+            next_action = "Gerar proposta comercial como rascunho e revisar valores, condições técnicas e comerciais antes do envio."
         summary = (
             f"Lead com score {score}/100 e chance {probability} de conversão. "
             "Os dados coletados permitem abordagem comercial objetiva."
@@ -199,7 +208,8 @@ class AIAnalysisService:
                     "Olá! Já temos as informações iniciais para avançar com sua análise. "
                     "Para deixar a proposta mais precisa, pode enviar uma foto ou PDF da sua conta de energia?"
                 ),
-                "tags": ["lead", f"lead_{self._lead_label(score)}", f"conversao_{probability}"],
+                "tags": ["lead", f"lead_{self._lead_label(score)}", f"conversao_{probability}"]
+                + (["gerar_proposta_comercial"] if score >= 75 and not missing_data else []),
                 "raw_analysis": {"mode": "rules", "lead_score": score, "financing_interest": bool(lead.financing_interest)},
             }
         )
@@ -677,6 +687,27 @@ class AIAnalysisService:
         if hot_leads:
             recommendations.append("Priorizar leads quentes no mesmo dia para aumentar conversão comercial.")
         return recommendations or ["Manter revisão semanal da base de conhecimento e dos principais motivos de contato."]
+
+    def _multimedia_recommendation(self, text: str, technical_risk: str) -> tuple[str | None, str | None]:
+        if technical_risk in {"critico", "alto"} or is_electrical_risk(text):
+            return None, None
+        article = self.knowledge.find_matching_article(text)
+        if not article:
+            return None, None
+
+        action_parts = []
+        reply_parts = []
+        if article.send_video_with_answer and article.video_url:
+            video_title = article.video_title or "vídeo oficial da Solar Soluções"
+            action_parts.append(f"Enviar vídeo oficial sobre {video_title}.")
+            reply_parts.extend(["Vídeo recomendado:", video_title, article.video_url])
+        if article.send_resource_with_answer and article.resource_url:
+            resource_title = article.resource_title or "material oficial da Solar Soluções"
+            action_parts.append(f"Enviar material de apoio: {resource_title}.")
+            if reply_parts:
+                reply_parts.append("")
+            reply_parts.extend(["Material de apoio:", resource_title, article.resource_url])
+        return " ".join(action_parts) or None, "\n".join(reply_parts) or None
 
     @staticmethod
     def _top_values(values: list[str], limit: int = 5) -> list[str]:

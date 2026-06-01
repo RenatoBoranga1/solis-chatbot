@@ -16,6 +16,7 @@ A Análise Inteligente transforma conversas, leads e chamados em uma leitura est
 - resposta sugerida ao cliente;
 - tags estratégicas;
 - score de prioridade, lead ou risco.
+- sugestão de vídeo oficial ou material de apoio quando a base tiver recurso seguro relacionado.
 
 ## Endpoints
 
@@ -61,7 +62,9 @@ No painel administrativo:
 - conversas mostram resumo, sentimento, urgência, risco, dados faltantes, próxima ação e resposta sugerida;
 - leads mostram score de conversão e etiqueta frio, morno ou quente;
 - chamados mostram score de risco e etiqueta baixo, médio, alto ou crítico;
-- dashboard mostra leads quentes, chamados críticos, clientes irritados, oportunidades de financiamento, problemas recorrentes e recomendações de gestão.
+- dashboard mostra leads quentes, chamados críticos, clientes irritados, oportunidades de financiamento, problemas recorrentes e recomendações de gestão;
+- conversas migradas do site para WhatsApp mantêm `migrated_from_channel` e `source_conversation_id` em `collected_data`, permitindo que a análise considere a continuidade omnichannel.
+- leads quentes com dados completos recebem recomendação de gerar proposta comercial como rascunho, sempre com revisão humana dos valores.
 
 As respostas sugeridas são apoio para o atendente. Elas devem ser revisadas antes do envio ao cliente.
 
@@ -75,6 +78,8 @@ A análise mascara e minimiza dados sensíveis. Ela não deve:
 - substituir avaliação humana em risco elétrico.
 
 Em casos de risco elétrico, a recomendação deve priorizar atendimento humano e orientação de segurança.
+
+Quando houver vídeo ou material de apoio cadastrado na base, a IA pode sugerir envio do recurso em `recommended_next_action` e incluir o link em `suggested_reply`, desde que o atendimento não envolva risco elétrico.
 
 ## Auditoria
 

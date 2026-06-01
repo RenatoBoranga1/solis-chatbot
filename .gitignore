@@ -9,5 +9,7 @@ dist/
 build/
 .DS_Store
 uploads/
+storage/
+backend/storage/
 *.log
 .idea/

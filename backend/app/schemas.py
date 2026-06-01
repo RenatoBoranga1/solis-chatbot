@@ -1,12 +1,15 @@
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+
+from app.core.urls import validate_safe_url
 
 Channel = Literal["site", "whatsapp", "instagram", "facebook", "admin"]
 SenderType = Literal["customer", "bot", "human"]
 Severity = Literal["baixa", "media", "alta"]
 AnalysisType = Literal["conversation", "lead", "ticket", "daily_dashboard"]
+ProposalStatus = Literal["draft", "under_review", "approved", "sent", "accepted", "rejected", "expired", "canceled"]
 
 
 class TokenOut(BaseModel):
@@ -99,6 +102,24 @@ class MessageOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class ConversationChannelLinkOut(BaseModel):
+    id: str
+    customer_id: str
+    source_conversation_id: str
+    target_conversation_id: str | None
+    source_channel: str
+    target_channel: str
+    external_id: str | None
+    phone: str
+    lead_id: str | None
+    ticket_id: str | None
+    status: str
+    created_at: datetime
+    confirmed_at: datetime | None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class ConversationOut(BaseModel):
     id: str
     customer_id: str | None
@@ -114,6 +135,8 @@ class ConversationOut(BaseModel):
     created_at: datetime
     updated_at: datetime | None
     messages: list[MessageOut] = Field(default_factory=list)
+    outbound_channel_links: list[ConversationChannelLinkOut] = Field(default_factory=list)
+    inbound_channel_links: list[ConversationChannelLinkOut] = Field(default_factory=list)
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -125,6 +148,20 @@ class AssignIn(BaseModel):
 class HandoffIn(BaseModel):
     reason: str = Field(min_length=2, max_length=180)
     assigned_to: str | None = None
+
+
+class ContinueWhatsAppIn(BaseModel):
+    template_name: str = Field(default="continuar_atendimento_site", max_length=120)
+    custom_message: str | None = Field(default=None, max_length=1200)
+    review_confirmed: bool = False
+
+
+class ContinueWhatsAppOut(BaseModel):
+    status: str
+    conversation_channel_link_id: str
+    phone: str
+    message: str
+    target_conversation_id: str | None = None
 
 
 class LeadIn(BaseModel):
@@ -201,8 +238,23 @@ class KnowledgeIn(BaseModel):
     answer: str
     category: str
     keywords: list[str] = Field(default_factory=list)
+    video_url: str | None = None
+    video_title: str | None = None
+    resource_url: str | None = None
+    resource_title: str | None = None
+    resource_type: str | None = None
+    send_video_with_answer: bool = False
+    send_resource_with_answer: bool = False
     active: bool = True
     use_for_ai: bool = True
+
+    @field_validator("video_url", "resource_url")
+    @classmethod
+    def safe_url(cls, value: str | None) -> str | None:
+        try:
+            return validate_safe_url(value)
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
 
 
 class KnowledgeOut(KnowledgeIn):
@@ -266,3 +318,114 @@ class DashboardAIInsights(BaseModel):
     principais_cidades: list[str] = Field(default_factory=list)
     taxa_handoff: float
     recomendacoes: list[str] = Field(default_factory=list)
+
+
+class ProposalItemBase(BaseModel):
+    category: str
+    description: str
+    quantity: float = 1
+    unit: str = "un"
+    unit_price: float = 0
+    total_price: float | None = None
+    editable: bool = True
+    sort_order: int = 0
+
+
+class ProposalItemCreate(ProposalItemBase):
+    pass
+
+
+class ProposalItemUpdate(BaseModel):
+    category: str | None = None
+    description: str | None = None
+    quantity: float | None = None
+    unit: str | None = None
+    unit_price: float | None = None
+    editable: bool | None = None
+    sort_order: int | None = None
+
+
+class ProposalItemOut(ProposalItemBase):
+    id: str
+    proposal_id: str
+    total_price: float
+    created_at: datetime
+    updated_at: datetime | None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ProposalBase(BaseModel):
+    customer_id: str | None = None
+    lead_id: str | None = None
+    conversation_id: str | None = None
+    proposal_number: str | None = None
+    status: ProposalStatus = "draft"
+    customer_name: str
+    customer_phone: str | None = None
+    customer_email: EmailStr | None = None
+    city: str | None = None
+    state: str | None = Field(default=None, max_length=2)
+    property_type: str | None = None
+    average_bill: float | None = None
+    estimated_system_power_kwp: float | None = None
+    estimated_monthly_generation_kwh: float | None = None
+    estimated_savings_percentage: float | None = None
+    validity_days: int = 7
+    notes: str | None = None
+    internal_notes: str | None = None
+    subtotal: float = 0
+    discount: float = 0
+    total_amount: float = 0
+    payment_conditions: str | None = None
+    pdf_url: str | None = None
+
+
+class ProposalCreate(ProposalBase):
+    items: list[ProposalItemCreate] = Field(default_factory=list)
+
+
+class ProposalUpdate(BaseModel):
+    status: ProposalStatus | None = None
+    customer_name: str | None = None
+    customer_phone: str | None = None
+    customer_email: EmailStr | None = None
+    city: str | None = None
+    state: str | None = Field(default=None, max_length=2)
+    property_type: str | None = None
+    average_bill: float | None = None
+    estimated_system_power_kwp: float | None = None
+    estimated_monthly_generation_kwh: float | None = None
+    estimated_savings_percentage: float | None = None
+    validity_days: int | None = None
+    notes: str | None = None
+    internal_notes: str | None = None
+    discount: float | None = None
+    payment_conditions: str | None = None
+
+
+class ProposalOut(ProposalBase):
+    id: str
+    proposal_number: str
+    subtotal: float
+    total_amount: float
+    created_at: datetime
+    updated_at: datetime | None
+    items: list[ProposalItemOut] = Field(default_factory=list)
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ProposalStatusUpdate(BaseModel):
+    status: ProposalStatus
+
+
+class ProposalSendRequest(BaseModel):
+    channel: Literal["whatsapp", "email", "manual"] = "manual"
+    message: str | None = None
+
+
+class ProposalSendResult(BaseModel):
+    status: str
+    message: str
+    pdf_url: str | None = None

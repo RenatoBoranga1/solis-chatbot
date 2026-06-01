@@ -4,12 +4,14 @@ import re
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.phone import normalize_phone
 from app.core.privacy import LGPD_CONSENT_MESSAGE, encrypt_value
 from app.core.security import sanitize_text
 from app.models import Attachment, Conversation, Customer, Handoff, Lead, Message, Ticket, utc_now
 from app.schemas import ChatMessageIn, ChatMessageOut, QuickReply
 from app.services.flows import next_missing_question, summarize_collected_data
 from app.services.intent import classify_intent, is_commercial_intent, is_support_intent, normalize
+from app.services.omnichannel import OmnichannelService
 from app.services.rag import KnowledgeService
 from app.services.severity import classify_severity, is_electrical_risk
 from app.services.solis_prompt import ELECTRICAL_RISK_MESSAGE, HUMAN_HANDOFF_MESSAGE, WELCOME_MESSAGE
@@ -159,6 +161,9 @@ class ConversationService:
         message_text: str,
         intent: str,
     ) -> PersistedBotAction:
+        if collected.pop("omnichannel_confirmed_pending_response", False):
+            return self._continue_migrated_whatsapp_context(conversation, customer, collected)
+
         if normalize(message_text) in {"oi", "ola", "olá", "bom dia", "boa tarde", "boa noite", "menu"}:
             return PersistedBotAction(WELCOME_MESSAGE)
 
@@ -177,6 +182,14 @@ class ConversationService:
                 "Vou registrar as informações e encaminhar para um especialista da Solar Soluções agora."
             )
             return self._handoff(conversation, severity.reason, response, ticket.id)
+
+        if self._should_try_knowledge_before_flow(message_text, intent):
+            knowledge_answer = self.knowledge.answer_from_base(message_text)
+            if knowledge_answer.answer:
+                conversation.bot_resolved = True
+                return PersistedBotAction(
+                    f"{knowledge_answer.answer}\n\nPosso te ajudar com mais alguma informação ou prefere que eu registre um atendimento?"
+                )
 
         flow = collected.get("flow")
         if not flow:
@@ -393,6 +406,9 @@ class ConversationService:
         if payload.conversation_id:
             return self._get_conversation(payload.conversation_id)
 
+        if payload.channel == "whatsapp":
+            return self._get_or_create_whatsapp_conversation(payload)
+
         if payload.external_id:
             existing = self.db.scalar(
                 select(Conversation).where(
@@ -424,6 +440,53 @@ class ConversationService:
         self.db.flush()
         return conversation
 
+    def _get_or_create_whatsapp_conversation(self, payload: ChatMessageIn) -> Conversation:
+        phone = normalize_phone((payload.customer.phone if payload.customer else None) or payload.external_id)
+        customer = self._find_customer_by_phone(phone, payload)
+
+        linked_conversation = OmnichannelService(self.db).confirm_whatsapp_response(
+            phone=phone,
+            external_id=payload.external_id,
+            message=payload.message,
+            customer=customer,
+        )
+        if linked_conversation:
+            if not linked_conversation.customer and customer:
+                linked_conversation.customer = customer
+            return linked_conversation
+
+        if payload.external_id:
+            existing = self.db.scalar(
+                select(Conversation).where(
+                    Conversation.channel == payload.channel,
+                    Conversation.external_id == payload.external_id,
+                    Conversation.status.in_(["open", "limited", "technical_triage", "commercial_triage", "handoff"]),
+                )
+            )
+            if existing:
+                return existing
+
+        if not customer:
+            customer = Customer()
+            self._merge_payload_customer(customer, payload)
+            if phone and not customer.phone:
+                customer.phone = phone
+            self.db.add(customer)
+            self.db.flush()
+        elif phone and not customer.phone:
+            customer.phone = phone
+
+        conversation = Conversation(
+            customer_id=customer.id,
+            channel="whatsapp",
+            external_id=payload.external_id or phone,
+            status="open",
+            collected_data={},
+        )
+        self.db.add(conversation)
+        self.db.flush()
+        return conversation
+
     def _get_conversation(self, conversation_id: str) -> Conversation:
         conversation = self.db.get(Conversation, conversation_id)
         if not conversation:
@@ -437,12 +500,23 @@ class ConversationService:
         for field in ["name", "phone", "email", "city", "state"]:
             value = getattr(incoming, field)
             if value:
-                setattr(customer, field, str(value))
+                setattr(customer, field, normalize_phone(str(value)) if field == "phone" else str(value))
         if incoming.document:
             customer.document = encrypt_value(incoming.document)
         if incoming.lgpd_consent:
             customer.lgpd_consent = True
             customer.lgpd_consent_at = customer.lgpd_consent_at or utc_now()
+
+    def _find_customer_by_phone(self, phone: str | None, payload: ChatMessageIn) -> Customer | None:
+        customer = None
+        if payload.customer_id:
+            customer = self.db.get(Customer, payload.customer_id)
+        if customer or not phone:
+            return customer
+        candidates = {phone}
+        if payload.customer and payload.customer.phone:
+            candidates.add(str(payload.customer.phone))
+        return self.db.scalar(select(Customer).where(Customer.phone.in_(list(candidates))).limit(1))
 
     def _capture_answer_from_previous_question(self, collected: dict, customer: Customer | None, answer: str) -> None:
         key = collected.pop("last_question_key", None)
@@ -454,7 +528,7 @@ class ConversationService:
             if key == "name":
                 customer.name = answer
             elif key == "phone":
-                customer.phone = answer
+                customer.phone = normalize_phone(answer)
             elif key == "email" and "@" in answer:
                 customer.email = answer
             elif key == "city":
@@ -508,6 +582,39 @@ class ConversationService:
             return False
         return None
 
+    def _continue_migrated_whatsapp_context(
+        self,
+        conversation: Conversation,
+        customer: Customer | None,
+        collected: dict,
+    ) -> PersistedBotAction:
+        name = (customer.name.split()[0] if customer and customer.name else None) or "tudo certo"
+        flow = collected.get("flow")
+        if flow == "orcamento" or conversation.intent in {"orcamento", "viabilidade", "financiamento", "comercial"}:
+            collected["last_question_key"] = "energy_bill_file"
+            return PersistedBotAction(
+                f"Perfeito, {name}. Vamos continuar por aqui. Já tenho seus dados iniciais. "
+                "Para avançar, pode enviar uma foto ou PDF da sua conta de energia?",
+                next_question_key="energy_bill_file",
+            )
+        if flow in {"suporte", "app_monitoramento"} or conversation.intent in {
+            "suporte_tecnico",
+            "problema_inversor",
+            "baixa_geracao",
+            "erro_monitoramento",
+            "wifi_inversor",
+        }:
+            collected["last_question_key"] = "problem_photo"
+            return PersistedBotAction(
+                f"Perfeito, {name}. Vamos continuar por aqui. Já tenho o contexto do site. "
+                "Pode enviar uma foto do inversor ou um print do aplicativo para a equipe técnica analisar?",
+                next_question_key="problem_photo",
+            )
+        return PersistedBotAction(
+            f"Perfeito, {name}. Vamos continuar por aqui. Já registrei o contexto do atendimento iniciado no site. "
+            "Como posso te ajudar agora?"
+        )
+
     @staticmethod
     def _strongest_severity(current: str | None, new: str | None) -> str | None:
         order = {"baixa": 1, "media": 2, "alta": 3}
@@ -516,3 +623,14 @@ class ConversationService:
         if not new:
             return current
         return current if order.get(current, 0) >= order.get(new, 0) else new
+
+    @staticmethod
+    def _should_try_knowledge_before_flow(message_text: str, intent: str) -> bool:
+        text = normalize(message_text)
+        if any(term in text for term in ["cheiro de queimado", "faisca", "fumaca", "choque", "curto"]):
+            return False
+        if intent in {"economia_conta", "creditos_energia"}:
+            return True
+        if intent in {"manutencao", "problema_inversor", "erro_monitoramento"}:
+            return any(term in text for term in ["como", "duvida", "limpeza", "limpar", "ligar", "desligar", "consultar"])
+        return False

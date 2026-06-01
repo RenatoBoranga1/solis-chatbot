@@ -4,24 +4,30 @@ import {
   BookOpenText,
   CheckCircle2,
   Copy,
+  FileText,
   Headphones,
   LogIn,
+  MessageCircle,
+  Plus,
   RefreshCw,
+  Send,
   ShieldCheck,
   Sparkles,
   TicketCheck,
+  Trash2,
   UsersRound,
 } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 
 import { adminApi, login } from "../api";
-import type { AIAnalysis, Conversation, DashboardAIInsights, DashboardMetrics, KnowledgeArticle, Lead, Ticket } from "../types";
+import type { AIAnalysis, Conversation, DashboardAIInsights, DashboardMetrics, KnowledgeArticle, Lead, Proposal, Ticket } from "../types";
 
 type AdminData = {
   metrics: DashboardMetrics | null;
   aiInsights: DashboardAIInsights | null;
   conversations: Conversation[];
   leads: Lead[];
+  proposals: Proposal[];
   tickets: Ticket[];
   knowledge: KnowledgeArticle[];
 };
@@ -31,6 +37,7 @@ const emptyData: AdminData = {
   aiInsights: null,
   conversations: [],
   leads: [],
+  proposals: [],
   tickets: [],
   knowledge: [],
 };
@@ -46,6 +53,8 @@ export function AdminDashboard() {
   const [conversationAnalyses, setConversationAnalyses] = useState<Record<string, AIAnalysis>>({});
   const [leadAnalyses, setLeadAnalyses] = useState<Record<string, AIAnalysis>>({});
   const [ticketAnalyses, setTicketAnalyses] = useState<Record<string, AIAnalysis>>({});
+  const [selectedProposal, setSelectedProposal] = useState<Proposal | null>(null);
+  const [proposalLoadingKey, setProposalLoadingKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [articleDraft, setArticleDraft] = useState({
     title: "",
@@ -53,6 +62,13 @@ export function AdminDashboard() {
     answer: "",
     category: "Energia solar fotovoltaica",
     keywords: "",
+    videoTitle: "",
+    videoUrl: "",
+    sendVideoWithAnswer: false,
+    resourceTitle: "",
+    resourceUrl: "",
+    resourceType: "youtube",
+    sendResourceWithAnswer: false,
   });
 
   const criticalTickets = useMemo(
@@ -66,15 +82,16 @@ export function AdminDashboard() {
       setLoading(true);
       setError(null);
       try {
-        const [metrics, aiInsights, conversations, leads, tickets, knowledge] = await Promise.all([
+        const [metrics, aiInsights, conversations, leads, proposals, tickets, knowledge] = await Promise.all([
           adminApi.metrics(currentToken),
           adminApi.aiInsights(currentToken),
           adminApi.conversations(currentToken),
           adminApi.leads(currentToken),
+          adminApi.proposals(currentToken),
           adminApi.tickets(currentToken),
           adminApi.knowledge(currentToken),
         ]);
-        setData({ metrics, aiInsights, conversations, leads, tickets, knowledge });
+        setData({ metrics, aiInsights, conversations, leads, proposals, tickets, knowledge });
       } catch (loadError) {
         setError("Não foi possível carregar o painel. Verifique o login e a API.");
       } finally {
@@ -112,6 +129,13 @@ export function AdminDashboard() {
         .split(",")
         .map((keyword) => keyword.trim())
         .filter(Boolean),
+      video_title: articleDraft.videoTitle || null,
+      video_url: articleDraft.videoUrl || null,
+      send_video_with_answer: articleDraft.sendVideoWithAnswer,
+      resource_title: articleDraft.resourceTitle || null,
+      resource_url: articleDraft.resourceUrl || null,
+      resource_type: articleDraft.resourceType || null,
+      send_resource_with_answer: articleDraft.sendResourceWithAnswer,
       active: true,
       use_for_ai: true,
     });
@@ -121,6 +145,13 @@ export function AdminDashboard() {
       answer: "",
       category: "Energia solar fotovoltaica",
       keywords: "",
+      videoTitle: "",
+      videoUrl: "",
+      sendVideoWithAnswer: false,
+      resourceTitle: "",
+      resourceUrl: "",
+      resourceType: "youtube",
+      sendResourceWithAnswer: false,
     });
     await loadData();
   }
@@ -164,6 +195,126 @@ export function AdminDashboard() {
       setError("Não foi possível gerar a análise inteligente do chamado.");
     } finally {
       setAnalysisLoadingKey(null);
+    }
+  }
+
+  async function handleCreateProposalFromLead(id: string) {
+    if (!token) return;
+    setProposalLoadingKey(`lead:${id}`);
+    setError(null);
+    try {
+      const proposal = await adminApi.createProposalFromLead(token, id);
+      setSelectedProposal(proposal);
+      setActiveView("propostas");
+      await loadData();
+    } catch (proposalError) {
+      setError("Não foi possível gerar a proposta a partir do lead.");
+    } finally {
+      setProposalLoadingKey(null);
+    }
+  }
+
+  async function handleCreateManualProposal() {
+    if (!token) return;
+    setProposalLoadingKey("manual");
+    setError(null);
+    try {
+      const proposal = await adminApi.createProposal(token, {
+        customer_name: "Novo cliente",
+        status: "draft",
+        validity_days: 7,
+        notes: "Valores e condições devem ser revisados pela equipe da Solar Soluções antes do envio ao cliente.",
+        payment_conditions: "A definir após revisão comercial.",
+        discount: 0,
+      });
+      setSelectedProposal(proposal);
+      await loadData();
+    } catch (proposalError) {
+      setError("Não foi possível criar a proposta manual.");
+    } finally {
+      setProposalLoadingKey(null);
+    }
+  }
+
+  async function handleOpenProposal(id: string) {
+    if (!token) return;
+    setProposalLoadingKey(`open:${id}`);
+    setError(null);
+    try {
+      setSelectedProposal(await adminApi.getProposal(token, id));
+    } catch (proposalError) {
+      setError("Não foi possível abrir a proposta.");
+    } finally {
+      setProposalLoadingKey(null);
+    }
+  }
+
+  async function handleUpdateProposal(id: string, payload: Partial<Proposal>) {
+    if (!token) return;
+    const updated = await adminApi.updateProposal(token, id, payload);
+    setSelectedProposal(updated);
+    await loadData();
+  }
+
+  async function handleUpdateProposalStatus(id: string, status: string) {
+    if (!token) return;
+    const updated = await adminApi.updateProposalStatus(token, id, status);
+    setSelectedProposal(updated);
+    await loadData();
+  }
+
+  async function handleAddProposalItem(id: string) {
+    if (!token) return;
+    const updated = await adminApi.addProposalItem(token, id, {
+      category: "outros",
+      description: "Novo item da proposta",
+      quantity: 1,
+      unit: "un",
+      unit_price: 0,
+      editable: true,
+      sort_order: selectedProposal?.items.length ?? 0,
+    });
+    setSelectedProposal(updated);
+    await loadData();
+  }
+
+  async function handleUpdateProposalItem(proposalId: string, itemId: string, payload: Record<string, unknown>) {
+    if (!token) return;
+    const updated = await adminApi.updateProposalItem(token, proposalId, itemId, payload);
+    setSelectedProposal(updated);
+    await loadData();
+  }
+
+  async function handleDeleteProposalItem(proposalId: string, itemId: string) {
+    if (!token) return;
+    const updated = await adminApi.deleteProposalItem(token, proposalId, itemId);
+    setSelectedProposal(updated);
+    await loadData();
+  }
+
+  async function handleGenerateProposalPdf(id: string) {
+    if (!token) return;
+    setProposalLoadingKey(`pdf:${id}`);
+    try {
+      const updated = await adminApi.generateProposalPdf(token, id);
+      setSelectedProposal(updated);
+      await loadData();
+    } finally {
+      setProposalLoadingKey(null);
+    }
+  }
+
+  async function handleSendProposal(id: string) {
+    if (!token) return;
+    setProposalLoadingKey(`send:${id}`);
+    try {
+      const result = await adminApi.sendProposal(token, id);
+      setError(result.message);
+      const updated = await adminApi.getProposal(token, id);
+      setSelectedProposal(updated);
+      await loadData();
+    } finally {
+      setProposalLoadingKey(null);
     }
   }
 
@@ -218,6 +369,7 @@ export function AdminDashboard() {
           <NavButton id="dashboard" label="Dashboard" icon={<BarChart3 size={18} />} active={activeView} onClick={setActiveView} />
           <NavButton id="conversas" label="Atendimentos" icon={<Headphones size={18} />} active={activeView} onClick={setActiveView} />
           <NavButton id="leads" label="Leads" icon={<UsersRound size={18} />} active={activeView} onClick={setActiveView} />
+          <NavButton id="propostas" label="Propostas" icon={<FileText size={18} />} active={activeView} onClick={setActiveView} />
           <NavButton id="chamados" label="Chamados" icon={<TicketCheck size={18} />} active={activeView} onClick={setActiveView} />
           <NavButton id="base" label="Base" icon={<BookOpenText size={18} />} active={activeView} onClick={setActiveView} />
         </nav>
@@ -266,6 +418,24 @@ export function AdminDashboard() {
             loadingKey={analysisLoadingKey}
             onAnalyze={handleAnalyzeLead}
             onCopy={copySuggestedReply}
+            onCreateProposal={handleCreateProposalFromLead}
+            proposalLoadingKey={proposalLoadingKey}
+          />
+        )}
+        {activeView === "propostas" && (
+          <ProposalsView
+            proposals={data.proposals}
+            selectedProposal={selectedProposal}
+            loadingKey={proposalLoadingKey}
+            onCreateManual={handleCreateManualProposal}
+            onOpen={handleOpenProposal}
+            onUpdate={handleUpdateProposal}
+            onUpdateStatus={handleUpdateProposalStatus}
+            onAddItem={handleAddProposalItem}
+            onUpdateItem={handleUpdateProposalItem}
+            onDeleteItem={handleDeleteProposalItem}
+            onGeneratePdf={handleGenerateProposalPdf}
+            onSend={handleSendProposal}
           />
         )}
         {activeView === "chamados" && (
@@ -312,6 +482,7 @@ function titleFor(view: string) {
     dashboard: "Dashboard",
     conversas: "Atendimentos",
     leads: "Leads de orçamento",
+    propostas: "Propostas",
     chamados: "Chamados técnicos",
     base: "Base de conhecimento",
   };
@@ -323,10 +494,44 @@ function subtitleFor(view: string) {
     dashboard: "Indicadores de atendimento, vendas e suporte.",
     conversas: "Histórico das conversas e transferências.",
     leads: "Solicitações comerciais captadas pelo Solis.",
+    propostas: "Criação, revisão, PDF e envio de propostas comerciais.",
     chamados: "Triagem técnica com gravidade e status.",
     base: "Perguntas e respostas oficiais para IA e atendimento.",
   };
   return subtitles[view] ?? "";
+}
+
+const PROPOSAL_STATUSES = [
+  { value: "draft", label: "Rascunho" },
+  { value: "under_review", label: "Em revisão" },
+  { value: "approved", label: "Aprovada" },
+  { value: "sent", label: "Enviada" },
+  { value: "accepted", label: "Aceita" },
+  { value: "rejected", label: "Rejeitada" },
+  { value: "expired", label: "Expirada" },
+  { value: "canceled", label: "Cancelada" },
+];
+
+const PROPOSAL_ITEM_CATEGORIES = [
+  { value: "kit_fotovoltaico", label: "Kit fotovoltaico" },
+  { value: "materiais_eletricos", label: "Materiais elétricos" },
+  { value: "mao_de_obra", label: "Mão de obra" },
+  { value: "projeto", label: "Projeto" },
+  { value: "homologacao", label: "Homologação" },
+  { value: "taxas_concessionaria", label: "Taxas e adequações" },
+  { value: "estrutura_fixacao", label: "Estrutura de fixação" },
+  { value: "deslocamento", label: "Deslocamento" },
+  { value: "monitoramento", label: "Monitoramento" },
+  { value: "outros", label: "Outros" },
+];
+
+function formatCurrency(value: number | null | undefined) {
+  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(value ?? 0));
+}
+
+function ProposalStatusPill({ status }: { status: string }) {
+  const label = PROPOSAL_STATUSES.find((item) => item.value === status)?.label ?? status;
+  return <span className={`proposal-status proposal-status--${status}`}>{label}</span>;
 }
 
 function DashboardView({
@@ -462,18 +667,44 @@ function ConversationsView({
   onAnalyze: (id: string) => Promise<void>;
   onCopy: (text: string) => void;
 }) {
+  const [whatsappLoadingId, setWhatsappLoadingId] = useState<string | null>(null);
+  const [whatsappNotice, setWhatsappNotice] = useState<string | null>(null);
+
   async function requestHandoff(id: string) {
     await adminApi.handoff(token, id, "Assumido manualmente pelo painel.");
     await refresh();
   }
 
+  async function continueOnWhatsApp(conversation: Conversation) {
+    if (conversation.severity === "alta") {
+      setWhatsappNotice("Este caso tem gravidade alta. Revise antes de enviar o convite pelo WhatsApp.");
+      return;
+    }
+    setWhatsappLoadingId(conversation.id);
+    setWhatsappNotice(null);
+    try {
+      const result = await adminApi.continueWhatsApp(token, conversation.id);
+      const label = result.status === "simulated" ? "simulado em desenvolvimento" : "enviado";
+      setWhatsappNotice(`Convite WhatsApp ${label}. O cliente deve responder SIM para confirmar.`);
+      await refresh();
+    } catch (continueError) {
+      setWhatsappNotice("Não foi possível iniciar a continuidade pelo WhatsApp. Verifique telefone, gravidade e configuração da API.");
+    } finally {
+      setWhatsappLoadingId(null);
+    }
+  }
+
   return (
     <section className="table-panel">
+      {whatsappNotice && <div className="notice notice--compact">{whatsappNotice}</div>}
       <TableHeader columns={["Canal", "Intenção", "Gravidade", "Status", "Resumo", "Ação"]} />
       {conversations.map((conversation) => (
         <div className="table-group" key={conversation.id}>
           <div className="table-row table-row--six">
-            <span>{conversation.channel}</span>
+            <span className="channel-cell">
+              {conversation.channel}
+              <WhatsAppLinkBadge conversation={conversation} />
+            </span>
             <span>{conversation.intent ?? "N/I"}</span>
             <SeverityPill severity={conversation.severity} />
             <span>{conversation.status}</span>
@@ -490,6 +721,17 @@ function ConversationsView({
                 <Sparkles size={15} />
                 {analyses[conversation.id] ? "Regenerar" : "Gerar IA"}
               </button>
+              {canContinueOnWhatsApp(conversation) && (
+                <button
+                  className="text-button text-button--whatsapp"
+                  onClick={() => continueOnWhatsApp(conversation)}
+                  disabled={whatsappLoadingId === conversation.id}
+                  title={conversation.severity === "alta" ? "Revise caso de alta gravidade antes do convite" : undefined}
+                >
+                  <MessageCircle size={15} />
+                  {whatsappLoadingId === conversation.id ? "Enviando" : "WhatsApp"}
+                </button>
+              )}
             </div>
           </div>
           {analyses[conversation.id] && (
@@ -501,18 +743,48 @@ function ConversationsView({
   );
 }
 
+function canContinueOnWhatsApp(conversation: Conversation) {
+  if (conversation.channel === "whatsapp") return false;
+  const link = latestWhatsAppLink(conversation);
+  if (link?.status === "confirmed") return false;
+  return ["commercial_triage", "technical_triage", "handoff", "human_assigned"].includes(conversation.status);
+}
+
+function latestWhatsAppLink(conversation: Conversation) {
+  return [...(conversation.outbound_channel_links ?? [])]
+    .filter((link) => link.target_channel === "whatsapp")
+    .sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
+}
+
+function WhatsAppLinkBadge({ conversation }: { conversation: Conversation }) {
+  const link = latestWhatsAppLink(conversation);
+  if (!link) return null;
+  const label: Record<string, string> = {
+    pending: "WhatsApp pendente",
+    invited: "WhatsApp enviado",
+    confirmed: "WhatsApp confirmado",
+    failed: "WhatsApp falhou",
+    expired: "WhatsApp expirado",
+  };
+  return <small className={`channel-badge channel-badge--${link.status}`}>{label[link.status] ?? link.status}</small>;
+}
+
 function LeadsView({
   leads,
   analyses,
   loadingKey,
   onAnalyze,
   onCopy,
+  onCreateProposal,
+  proposalLoadingKey,
 }: {
   leads: Lead[];
   analyses: Record<string, AIAnalysis>;
   loadingKey: string | null;
   onAnalyze: (id: string) => Promise<void>;
   onCopy: (text: string) => void;
+  onCreateProposal: (id: string) => Promise<void>;
+  proposalLoadingKey: string | null;
 }) {
   return (
     <section className="table-panel">
@@ -540,11 +812,229 @@ function LeadsView({
                   Copiar
                 </button>
               )}
+              <button
+                className="text-button text-button--proposal"
+                onClick={() => onCreateProposal(lead.id)}
+                disabled={proposalLoadingKey === `lead:${lead.id}`}
+              >
+                <FileText size={15} />
+                {proposalLoadingKey === `lead:${lead.id}` ? "Gerando" : "Gerar proposta"}
+              </button>
             </div>
           </div>
           {analyses[lead.id] && <AnalysisPanel analysis={analyses[lead.id]} onCopy={onCopy} variant="lead" />}
         </div>
       ))}
+    </section>
+  );
+}
+
+function ProposalsView({
+  proposals,
+  selectedProposal,
+  loadingKey,
+  onCreateManual,
+  onOpen,
+  onUpdate,
+  onUpdateStatus,
+  onAddItem,
+  onUpdateItem,
+  onDeleteItem,
+  onGeneratePdf,
+  onSend,
+}: {
+  proposals: Proposal[];
+  selectedProposal: Proposal | null;
+  loadingKey: string | null;
+  onCreateManual: () => Promise<void>;
+  onOpen: (id: string) => Promise<void>;
+  onUpdate: (id: string, payload: Partial<Proposal>) => Promise<void>;
+  onUpdateStatus: (id: string, status: string) => Promise<void>;
+  onAddItem: (id: string) => Promise<void>;
+  onUpdateItem: (proposalId: string, itemId: string, payload: Record<string, unknown>) => Promise<void>;
+  onDeleteItem: (proposalId: string, itemId: string) => Promise<void>;
+  onGeneratePdf: (id: string) => Promise<void>;
+  onSend: (id: string) => Promise<void>;
+}) {
+  const [filters, setFilters] = useState({ status: "", city: "", customer: "" });
+  const filtered = proposals.filter((proposal) => {
+    const byStatus = !filters.status || proposal.status === filters.status;
+    const byCity = !filters.city || (proposal.city ?? "").toLowerCase().includes(filters.city.toLowerCase());
+    const byCustomer = !filters.customer || proposal.customer_name.toLowerCase().includes(filters.customer.toLowerCase());
+    return byStatus && byCity && byCustomer;
+  });
+
+  return (
+    <section className="proposals-layout">
+      <div className="table-panel proposal-list">
+        <div className="proposal-toolbar">
+          <div className="proposal-filters">
+            <select value={filters.status} onChange={(event) => setFilters((current) => ({ ...current, status: event.target.value }))}>
+              <option value="">Todos os status</option>
+              {PROPOSAL_STATUSES.map((status) => (
+                <option value={status.value} key={status.value}>
+                  {status.label}
+                </option>
+              ))}
+            </select>
+            <input placeholder="Cidade" value={filters.city} onChange={(event) => setFilters((current) => ({ ...current, city: event.target.value }))} />
+            <input placeholder="Cliente" value={filters.customer} onChange={(event) => setFilters((current) => ({ ...current, customer: event.target.value }))} />
+          </div>
+          <button className="primary-button" onClick={onCreateManual} disabled={loadingKey === "manual"}>
+            <Plus size={16} />
+            Nova proposta
+          </button>
+        </div>
+        <TableHeader columns={["Número", "Cliente", "Cidade", "Tipo", "Total", "Status", "Ação"]} />
+        {filtered.map((proposal) => (
+          <div className="table-row table-row--seven" key={proposal.id}>
+            <span>{proposal.proposal_number}</span>
+            <span className="truncate">{proposal.customer_name}</span>
+            <span>{proposal.city ?? "N/I"}</span>
+            <span>{proposal.property_type ?? "N/I"}</span>
+            <span>{formatCurrency(proposal.total_amount)}</span>
+            <ProposalStatusPill status={proposal.status} />
+            <div className="row-actions">
+              <button className="text-button" onClick={() => onOpen(proposal.id)} disabled={loadingKey === `open:${proposal.id}`}>
+                Abrir
+              </button>
+              <button className="text-button" onClick={() => onGeneratePdf(proposal.id)} disabled={loadingKey === `pdf:${proposal.id}`}>
+                <FileText size={15} />
+                PDF
+              </button>
+              <button className="text-button text-button--proposal" onClick={() => onSend(proposal.id)} disabled={loadingKey === `send:${proposal.id}`}>
+                <Send size={15} />
+                Enviar
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {selectedProposal && (
+        <article className="proposal-detail">
+          <div className="proposal-detail__header">
+            <div>
+              <strong>{selectedProposal.proposal_number}</strong>
+              <span>Valores e condições devem ser revisados pela equipe da Solar Soluções antes do envio ao cliente.</span>
+            </div>
+            <ProposalStatusPill status={selectedProposal.status} />
+          </div>
+
+          <div className="proposal-grid">
+            <label>
+              Cliente
+              <input defaultValue={selectedProposal.customer_name} onBlur={(event) => onUpdate(selectedProposal.id, { customer_name: event.target.value })} />
+            </label>
+            <label>
+              Telefone
+              <input defaultValue={selectedProposal.customer_phone ?? ""} onBlur={(event) => onUpdate(selectedProposal.id, { customer_phone: event.target.value })} />
+            </label>
+            <label>
+              E-mail
+              <input defaultValue={selectedProposal.customer_email ?? ""} onBlur={(event) => onUpdate(selectedProposal.id, { customer_email: event.target.value })} />
+            </label>
+            <label>
+              Cidade
+              <input defaultValue={selectedProposal.city ?? ""} onBlur={(event) => onUpdate(selectedProposal.id, { city: event.target.value })} />
+            </label>
+            <label>
+              UF
+              <input defaultValue={selectedProposal.state ?? ""} maxLength={2} onBlur={(event) => onUpdate(selectedProposal.id, { state: event.target.value })} />
+            </label>
+            <label>
+              Tipo de imóvel
+              <input defaultValue={selectedProposal.property_type ?? ""} onBlur={(event) => onUpdate(selectedProposal.id, { property_type: event.target.value })} />
+            </label>
+            <label>
+              Conta média
+              <input type="number" defaultValue={selectedProposal.average_bill ?? ""} onBlur={(event) => onUpdate(selectedProposal.id, { average_bill: Number(event.target.value) || null })} />
+            </label>
+            <label>
+              Potência kWp
+              <input type="number" step="0.001" defaultValue={selectedProposal.estimated_system_power_kwp ?? ""} onBlur={(event) => onUpdate(selectedProposal.id, { estimated_system_power_kwp: Number(event.target.value) || null })} />
+            </label>
+            <label>
+              Geração mensal kWh
+              <input type="number" defaultValue={selectedProposal.estimated_monthly_generation_kwh ?? ""} onBlur={(event) => onUpdate(selectedProposal.id, { estimated_monthly_generation_kwh: Number(event.target.value) || null })} />
+            </label>
+            <label>
+              Economia estimada %
+              <input type="number" defaultValue={selectedProposal.estimated_savings_percentage ?? ""} onBlur={(event) => onUpdate(selectedProposal.id, { estimated_savings_percentage: Number(event.target.value) || null })} />
+            </label>
+          </div>
+
+          <div className="proposal-items">
+            <div className="proposal-section-title">
+              <strong>Itens da proposta</strong>
+              <button className="text-button" onClick={() => onAddItem(selectedProposal.id)}>
+                <Plus size={15} />
+                Item
+              </button>
+            </div>
+            {selectedProposal.items.map((item) => (
+              <div className="proposal-item-row" key={item.id}>
+                <select defaultValue={item.category} onBlur={(event) => onUpdateItem(selectedProposal.id, item.id, { category: event.target.value })}>
+                  {PROPOSAL_ITEM_CATEGORIES.map((category) => (
+                    <option key={category.value} value={category.value}>
+                      {category.label}
+                    </option>
+                  ))}
+                </select>
+                <input defaultValue={item.description} onBlur={(event) => onUpdateItem(selectedProposal.id, item.id, { description: event.target.value })} />
+                <input type="number" step="0.001" defaultValue={item.quantity} onBlur={(event) => onUpdateItem(selectedProposal.id, item.id, { quantity: Number(event.target.value) || 0 })} />
+                <input defaultValue={item.unit} onBlur={(event) => onUpdateItem(selectedProposal.id, item.id, { unit: event.target.value })} />
+                <input type="number" step="0.01" defaultValue={item.unit_price} onBlur={(event) => onUpdateItem(selectedProposal.id, item.id, { unit_price: Number(event.target.value) || 0 })} />
+                <strong>{formatCurrency(item.total_price)}</strong>
+                <button className="icon-button" onClick={() => onDeleteItem(selectedProposal.id, item.id)} aria-label="Remover item">
+                  <Trash2 size={15} />
+                </button>
+              </div>
+            ))}
+          </div>
+
+          <div className="proposal-financial">
+            <span>Subtotal: <strong>{formatCurrency(selectedProposal.subtotal)}</strong></span>
+            <label>
+              Desconto
+              <input type="number" step="0.01" defaultValue={selectedProposal.discount} onBlur={(event) => onUpdate(selectedProposal.id, { discount: Number(event.target.value) || 0 })} />
+            </label>
+            <span>Total: <strong>{formatCurrency(selectedProposal.total_amount)}</strong></span>
+            <label>
+              Validade
+              <input type="number" defaultValue={selectedProposal.validity_days} onBlur={(event) => onUpdate(selectedProposal.id, { validity_days: Number(event.target.value) || 7 })} />
+            </label>
+          </div>
+
+          <label className="proposal-wide-field">
+            Condições de pagamento
+            <textarea defaultValue={selectedProposal.payment_conditions ?? ""} onBlur={(event) => onUpdate(selectedProposal.id, { payment_conditions: event.target.value })} />
+          </label>
+          <label className="proposal-wide-field">
+            Observações
+            <textarea defaultValue={selectedProposal.notes ?? ""} onBlur={(event) => onUpdate(selectedProposal.id, { notes: event.target.value })} />
+          </label>
+
+          <div className="proposal-actions">
+            <select value={selectedProposal.status} onChange={(event) => onUpdateStatus(selectedProposal.id, event.target.value)}>
+              {PROPOSAL_STATUSES.map((status) => (
+                <option value={status.value} key={status.value}>
+                  {status.label}
+                </option>
+              ))}
+            </select>
+            <button className="secondary-button" onClick={() => onGeneratePdf(selectedProposal.id)}>
+              <FileText size={16} />
+              Gerar PDF
+            </button>
+            <button className="primary-button" onClick={() => onSend(selectedProposal.id)}>
+              <Send size={16} />
+              Enviar proposta
+            </button>
+          </div>
+          {selectedProposal.pdf_url && <p className="proposal-pdf-path">PDF: {selectedProposal.pdf_url}</p>}
+        </article>
+      )}
     </section>
   );
 }
@@ -688,6 +1178,21 @@ function ScoreBadge({ score, type }: { score?: number; type: "lead" | "ticket" |
   );
 }
 
+type KnowledgeDraft = {
+  title: string;
+  question: string;
+  answer: string;
+  category: string;
+  keywords: string;
+  videoTitle: string;
+  videoUrl: string;
+  sendVideoWithAnswer: boolean;
+  resourceTitle: string;
+  resourceUrl: string;
+  resourceType: string;
+  sendResourceWithAnswer: boolean;
+};
+
 function KnowledgeView({
   articles,
   draft,
@@ -695,8 +1200,8 @@ function KnowledgeView({
   onSubmit,
 }: {
   articles: KnowledgeArticle[];
-  draft: { title: string; question: string; answer: string; category: string; keywords: string };
-  setDraft: (draft: { title: string; question: string; answer: string; category: string; keywords: string }) => void;
+  draft: KnowledgeDraft;
+  setDraft: (draft: KnowledgeDraft) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
   return (
@@ -741,6 +1246,53 @@ function KnowledgeView({
           value={draft.keywords}
           onChange={(event) => setDraft({ ...draft, keywords: event.target.value })}
         />
+        <div className="form-divider">Vídeo oficial</div>
+        <input
+          placeholder="Título do vídeo"
+          value={draft.videoTitle}
+          onChange={(event) => setDraft({ ...draft, videoTitle: event.target.value })}
+        />
+        <input
+          placeholder="Link do vídeo do YouTube"
+          value={draft.videoUrl}
+          onChange={(event) => setDraft({ ...draft, videoUrl: event.target.value })}
+        />
+        <label className="checkbox-row">
+          <input
+            type="checkbox"
+            checked={draft.sendVideoWithAnswer}
+            onChange={(event) => setDraft({ ...draft, sendVideoWithAnswer: event.target.checked })}
+          />
+          Enviar vídeo junto com a resposta
+        </label>
+        <div className="form-divider">Material de apoio</div>
+        <input
+          placeholder="Título do material de apoio"
+          value={draft.resourceTitle}
+          onChange={(event) => setDraft({ ...draft, resourceTitle: event.target.value })}
+        />
+        <input
+          placeholder="Link do material de apoio"
+          value={draft.resourceUrl}
+          onChange={(event) => setDraft({ ...draft, resourceUrl: event.target.value })}
+        />
+        <select value={draft.resourceType} onChange={(event) => setDraft({ ...draft, resourceType: event.target.value })}>
+          <option value="youtube">YouTube</option>
+          <option value="pdf">PDF</option>
+          <option value="manual">Manual</option>
+          <option value="artigo">Artigo</option>
+          <option value="site">Site</option>
+          <option value="outro">Outro</option>
+        </select>
+        <label className="checkbox-row">
+          <input
+            type="checkbox"
+            checked={draft.sendResourceWithAnswer}
+            onChange={(event) => setDraft({ ...draft, sendResourceWithAnswer: event.target.checked })}
+          />
+          Enviar material junto com a resposta
+        </label>
+        <ResponsePreview draft={draft} />
         <button className="primary-button" type="submit">
           <BookOpenText size={18} />
           Salvar artigo
@@ -754,11 +1306,44 @@ function KnowledgeView({
               <strong>{article.title}</strong>
               <span>{article.category}</span>
             </div>
+            <div className="article-badges">
+              {article.video_url && <span>Vídeo</span>}
+              {article.resource_url && <span>Material</span>}
+              {article.send_video_with_answer && <span>Vídeo automático</span>}
+              {article.send_resource_with_answer && <span>Material automático</span>}
+            </div>
             <p>{article.question}</p>
           </article>
         ))}
       </section>
     </div>
+  );
+}
+
+function ResponsePreview({ draft }: { draft: KnowledgeDraft }) {
+  return (
+    <section className="response-preview" aria-label="Prévia da resposta">
+      <strong>Prévia para o cliente</strong>
+      <p>{draft.answer || "A resposta oficial aparecerá aqui."}</p>
+      {draft.sendVideoWithAnswer && draft.videoUrl && (
+        <div>
+          <small>Vídeo recomendado:</small>
+          <span>{draft.videoTitle || "Vídeo oficial da Solar Soluções"}</span>
+          <a href={draft.videoUrl} target="_blank" rel="noreferrer">
+            {draft.videoUrl}
+          </a>
+        </div>
+      )}
+      {draft.sendResourceWithAnswer && draft.resourceUrl && (
+        <div>
+          <small>Material de apoio:</small>
+          <span>{draft.resourceTitle || "Material oficial da Solar Soluções"}</span>
+          <a href={draft.resourceUrl} target="_blank" rel="noreferrer">
+            {draft.resourceUrl}
+          </a>
+        </div>
+      )}
+    </section>
   );
 }
 

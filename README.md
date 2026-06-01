@@ -17,12 +17,15 @@ O projeto esta organizado como um monorepo simples:
 - Fluxos de orçamento, suporte técnico, app sem atualizar, cliente irritado e risco elétrico.
 - Coleta progressiva de dados, uma pergunta por vez.
 - Leads comerciais com status `Novo orçamento`.
+- Propostas comerciais com rascunho a partir de leads, itens editáveis, PDF e envio simulado.
 - Chamados técnicos com gravidade baixa, média ou alta.
 - Transferencia para humano em casos graves, complexos, comerciais estrategicos ou sem resposta confiavel.
 - Base de conhecimento administravel e pronta para RAG.
+- Base multimidia com videos oficiais, PDFs, manuais e links de apoio seguros.
 - Registro de perguntas sem resposta.
 - Painel com dashboard, conversas, leads, chamados e artigos.
 - Análise Inteligente para conversas, leads, chamados e insights estratégicos do dashboard.
+- Continuidade omnichannel do atendimento iniciado no site para o WhatsApp oficial, com contexto preservado.
 - LGPD desde o inicio: consentimento, minimizacao, auditoria e endpoints para solicitacoes de dados.
 
 ## Como rodar localmente com Docker
@@ -102,6 +105,7 @@ Chat:
 - `GET /chat/conversations`
 - `GET /chat/conversations/{id}`
 - `POST /chat/conversations/{id}/handoff`
+- `POST /chat/conversations/{id}/continue-whatsapp`
 - `POST /chat/conversations/{id}/assign`
 
 Leads:
@@ -111,6 +115,20 @@ Leads:
 - `GET /leads/{id}`
 - `PUT /leads/{id}`
 - `PATCH /leads/{id}/status`
+
+Propostas:
+
+- `GET /proposals`
+- `POST /proposals`
+- `POST /proposals/from-lead/{lead_id}`
+- `GET /proposals/{id}`
+- `PUT /proposals/{id}`
+- `PATCH /proposals/{id}/status`
+- `POST /proposals/{id}/items`
+- `PUT /proposals/{id}/items/{item_id}`
+- `DELETE /proposals/{id}/items/{item_id}`
+- `POST /proposals/{id}/generate-pdf`
+- `POST /proposals/{id}/send`
 
 Tickets:
 
@@ -230,6 +248,28 @@ python -m unittest discover tests
 
 Guia completo: [`docs/whatsapp-cloud-api.md`](docs/whatsapp-cloud-api.md).
 
+### Continuidade site -> WhatsApp
+
+Atendimentos qualificados no site podem ser continuados pelo WhatsApp oficial pelo endpoint autenticado:
+
+```text
+POST /chat/conversations/{conversation_id}/continue-whatsapp
+```
+
+O painel exibe o botão "WhatsApp" em conversas do site nos status `commercial_triage`, `technical_triage`, `handoff` ou `human_assigned`. Em desenvolvimento, se a Cloud API não estiver configurada, o envio é simulado e registrado no banco. Em produção, mensagens iniciadas pela empresa devem usar template aprovado pela Meta.
+
+A tabela `conversation_channel_links` registra a migração:
+
+- conversa de origem no site;
+- conversa de destino no WhatsApp, quando confirmada;
+- telefone normalizado;
+- lead ou chamado vinculado;
+- status `pending`, `invited`, `confirmed`, `expired` ou `failed`.
+
+Quando o cliente responde `SIM`, `ok`, `confirmo` ou equivalente no WhatsApp, o webhook identifica o telefone, confirma o link, cria a conversa WhatsApp herdando `collected_data`, `summary`, `intent` e `severity`, e continua o atendimento sem pedir tudo novamente.
+
+Guia completo: [`docs/omnichannel.md`](docs/omnichannel.md).
+
 ## Adaptadores futuros de WhatsApp
 
 O endpoint `POST /chat/message` continua funcionando para widget, testes e integrações futuras. Ele também pode ser usado por provedores como Z-API, Twilio, WATI, Take Blip ou Evolution API convertendo o webhook recebido para o contrato:
@@ -251,6 +291,19 @@ O servico `KnowledgeService` recupera artigos ativos por palavras-chave e catego
 - registrar pergunta sem resposta;
 - encaminhar para humano quando a confianca for baixa.
 
+## Base de conhecimento multimídia
+
+Os artigos da base podem ter resposta oficial, vídeo recomendado e material de apoio. Campos disponíveis:
+
+- `video_title` e `video_url`;
+- `resource_title`, `resource_url` e `resource_type`;
+- `send_video_with_answer`;
+- `send_resource_with_answer`.
+
+O bot envia links em texto simples, compatíveis com WhatsApp e widget. No site, links do YouTube aparecem como card simples com botão "Assistir vídeo". Vídeos automáticos devem ser ativados apenas para conteúdos oficiais e seguros, como limpeza preventiva, uso do aplicativo, leitura de geração e orientações gerais.
+
+Em risco elétrico, como cheiro de queimado, faísca, fumaça, choque ou curto, o bot não sugere vídeo de instrução e prioriza segurança com encaminhamento humano. Guia completo: [`docs/knowledge-base.md`](docs/knowledge-base.md).
+
 ## Análise Inteligente
 
 O painel administrativo possui uma camada de análise estratégica para conversas, leads, chamados e dashboard. Ela gera resumo executivo, intenção principal, sentimento, urgência, oportunidade comercial, risco técnico, dados faltantes, próxima ação, resposta sugerida, tags e score de prioridade.
@@ -263,6 +316,21 @@ Variáveis:
 - `AI_MODEL=gpt-4.1-mini`
 
 Com `ENABLE_GENERATIVE_AI=false` ou sem chave de IA, o sistema usa fallback por regras e continua funcionando sem custo externo. Com IA generativa habilitada e chave configurada, o serviço tenta usar o provedor configurado e volta para regras se houver erro. As respostas sugeridas devem ser revisadas por um atendente antes do envio e não prometem preço, prazo, economia, garantia ou diagnóstico final.
+
+## Propostas comerciais
+
+O painel possui a área `Propostas`, onde a Solar Soluções pode criar propostas manuais ou gerar rascunhos a partir de leads captados pelo Solis. A proposta inclui dados do cliente, dados técnicos estimados, itens editáveis, subtotal, desconto, total, condições de pagamento, validade e geração de PDF.
+
+Pontos importantes:
+
+- propostas geradas automaticamente sempre começam como `draft`;
+- itens e valores ficam editáveis para revisão humana;
+- o PDF deixa claro que valores, prazos e condições dependem de validação técnica e comercial;
+- em desenvolvimento, o envio é simulado;
+- em produção, envio ativo pelo WhatsApp exige observar a janela de 24 horas ou templates aprovados pela Meta;
+- PDFs devem ser armazenados em local seguro em produção.
+
+Guia completo: [`docs/proposals.md`](docs/proposals.md).
 
 ## LGPD
 
@@ -282,7 +350,7 @@ cd backend
 python -m unittest discover tests
 ```
 
-Os testes cobrem classificacao de intencao, gravidade, validacao do webhook, assinatura da Meta, deduplicacao, anexos, auditoria `WebhookEvent` e falhas de envio.
+Os testes cobrem classificacao de intencao, gravidade, validacao do webhook, assinatura da Meta, deduplicacao, anexos, auditoria `WebhookEvent`, continuidade site -> WhatsApp e falhas de envio.
 
 ## Deploy sugerido
 

@@ -2,10 +2,13 @@ import type {
   AIAnalysis,
   ChatResponse,
   Conversation,
+  ContinueWhatsAppResponse,
   DashboardAIInsights,
   DashboardMetrics,
   KnowledgeArticle,
   Lead,
+  Proposal,
+  ProposalSendResult,
   Ticket,
 } from "./types";
 
@@ -134,7 +137,30 @@ export const adminApi = {
   conversations: (token: string) => adminFetch<Conversation[]>("/chat/conversations", token),
   leads: (token: string) => adminFetch<Lead[]>("/leads", token),
   tickets: (token: string) => adminFetch<Ticket[]>("/tickets", token),
+  proposals: (token: string) => adminFetch<Proposal[]>("/proposals", token),
   knowledge: (token: string) => adminFetch<KnowledgeArticle[]>("/knowledge", token),
+  createProposal: (token: string, payload: Partial<Proposal>) =>
+    adminFetch<Proposal>("/proposals", token, { method: "POST", body: JSON.stringify(payload) }),
+  createProposalFromLead: (token: string, id: string) =>
+    adminFetch<Proposal>(`/proposals/from-lead/${id}`, token, { method: "POST" }),
+  getProposal: (token: string, id: string) => adminFetch<Proposal>(`/proposals/${id}`, token),
+  updateProposal: (token: string, id: string, payload: Partial<Proposal>) =>
+    adminFetch<Proposal>(`/proposals/${id}`, token, { method: "PUT", body: JSON.stringify(payload) }),
+  updateProposalStatus: (token: string, id: string, status: string) =>
+    adminFetch<Proposal>(`/proposals/${id}/status`, token, { method: "PATCH", body: JSON.stringify({ status }) }),
+  addProposalItem: (token: string, id: string, payload: Record<string, unknown>) =>
+    adminFetch<Proposal>(`/proposals/${id}/items`, token, { method: "POST", body: JSON.stringify(payload) }),
+  updateProposalItem: (token: string, proposalId: string, itemId: string, payload: Record<string, unknown>) =>
+    adminFetch<Proposal>(`/proposals/${proposalId}/items/${itemId}`, token, { method: "PUT", body: JSON.stringify(payload) }),
+  deleteProposalItem: (token: string, proposalId: string, itemId: string) =>
+    adminFetch<Proposal>(`/proposals/${proposalId}/items/${itemId}`, token, { method: "DELETE" }),
+  generateProposalPdf: (token: string, id: string) =>
+    adminFetch<Proposal>(`/proposals/${id}/generate-pdf`, token, { method: "POST" }),
+  sendProposal: (token: string, id: string) =>
+    adminFetch<ProposalSendResult>(`/proposals/${id}/send`, token, {
+      method: "POST",
+      body: JSON.stringify({ channel: "manual" }),
+    }),
   createKnowledge: (token: string, payload: Omit<KnowledgeArticle, "id" | "created_at">) =>
     adminFetch<KnowledgeArticle>("/knowledge", token, { method: "POST", body: JSON.stringify(payload) }),
   updateTicketStatus: (token: string, id: string, status: string) =>
@@ -143,6 +169,11 @@ export const adminApi = {
     adminFetch<{ id: string; status: string }>(`/chat/conversations/${id}/handoff`, token, {
       method: "POST",
       body: JSON.stringify({ reason }),
+    }),
+  continueWhatsApp: (token: string, id: string) =>
+    adminFetch<ContinueWhatsAppResponse>(`/chat/conversations/${id}/continue-whatsapp`, token, {
+      method: "POST",
+      body: JSON.stringify({}),
     }),
   analyzeConversation: (token: string, id: string) =>
     adminFetch<AIAnalysis>(`/ai/conversations/${id}/analyze`, token, { method: "POST" }),

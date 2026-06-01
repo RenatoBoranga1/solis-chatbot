@@ -73,6 +73,57 @@ export type DashboardAIInsights = {
   recomendacoes: string[];
 };
 
+export type ProposalItem = {
+  id: string;
+  proposal_id: string;
+  category: string;
+  description: string;
+  quantity: number;
+  unit: string;
+  unit_price: number;
+  total_price: number;
+  editable: boolean;
+  sort_order: number;
+  created_at: string;
+  updated_at: string | null;
+};
+
+export type Proposal = {
+  id: string;
+  customer_id: string | null;
+  lead_id: string | null;
+  conversation_id: string | null;
+  proposal_number: string;
+  status: string;
+  customer_name: string;
+  customer_phone: string | null;
+  customer_email: string | null;
+  city: string | null;
+  state: string | null;
+  property_type: string | null;
+  average_bill: number | null;
+  estimated_system_power_kwp: number | null;
+  estimated_monthly_generation_kwh: number | null;
+  estimated_savings_percentage: number | null;
+  validity_days: number;
+  notes: string | null;
+  internal_notes: string | null;
+  subtotal: number;
+  discount: number;
+  total_amount: number;
+  payment_conditions: string | null;
+  pdf_url: string | null;
+  created_at: string;
+  updated_at: string | null;
+  items: ProposalItem[];
+};
+
+export type ProposalSendResult = {
+  status: string;
+  message: string;
+  pdf_url: string | null;
+};
+
 export type Conversation = {
   id: string;
   customer_id: string | null;
@@ -82,7 +133,33 @@ export type Conversation = {
   severity: string | null;
   assigned_to: string | null;
   summary: string | null;
+  outbound_channel_links?: ConversationChannelLink[];
+  inbound_channel_links?: ConversationChannelLink[];
   created_at: string;
+};
+
+export type ConversationChannelLink = {
+  id: string;
+  customer_id: string;
+  source_conversation_id: string;
+  target_conversation_id: string | null;
+  source_channel: string;
+  target_channel: string;
+  external_id: string | null;
+  phone: string;
+  lead_id: string | null;
+  ticket_id: string | null;
+  status: "pending" | "invited" | "confirmed" | "expired" | "failed" | string;
+  created_at: string;
+  confirmed_at: string | null;
+};
+
+export type ContinueWhatsAppResponse = {
+  status: "sent" | "simulated" | "error" | string;
+  conversation_channel_link_id: string;
+  phone: string;
+  message: string;
+  target_conversation_id: string | null;
 };
 
 export type Lead = {
@@ -115,6 +192,13 @@ export type KnowledgeArticle = {
   answer: string;
   category: string;
   keywords: string[];
+  video_url: string | null;
+  video_title: string | null;
+  resource_url: string | null;
+  resource_title: string | null;
+  resource_type: string | null;
+  send_video_with_answer: boolean;
+  send_resource_with_answer: boolean;
   active: boolean;
   use_for_ai: boolean;
   created_at: string;

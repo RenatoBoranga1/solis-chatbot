@@ -11,6 +11,7 @@ from app.api import (
     routes_dashboard,
     routes_knowledge,
     routes_leads,
+    routes_proposals,
     routes_tickets,
     routes_whatsapp,
 )
@@ -62,6 +63,7 @@ def health() -> dict[str, str]:
 app.include_router(routes_auth.router)
 app.include_router(routes_chat.router)
 app.include_router(routes_leads.router)
+app.include_router(routes_proposals.router)
 app.include_router(routes_tickets.router)
 app.include_router(routes_knowledge.router)
 app.include_router(routes_dashboard.router)

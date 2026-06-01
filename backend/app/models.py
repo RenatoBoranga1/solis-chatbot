@@ -48,6 +48,8 @@ class Customer(Base, TimestampMixin):
     conversations: Mapped[list["Conversation"]] = relationship(back_populates="customer")
     leads: Mapped[list["Lead"]] = relationship(back_populates="customer")
     tickets: Mapped[list["Ticket"]] = relationship(back_populates="customer")
+    channel_links: Mapped[list["ConversationChannelLink"]] = relationship(back_populates="customer")
+    proposals: Mapped[list["Proposal"]] = relationship(back_populates="customer")
 
 
 class Conversation(Base, TimestampMixin):
@@ -71,6 +73,15 @@ class Conversation(Base, TimestampMixin):
     handoffs: Mapped[list["Handoff"]] = relationship(back_populates="conversation", cascade="all, delete-orphan")
     attachments: Mapped[list["Attachment"]] = relationship(back_populates="conversation", cascade="all, delete-orphan")
     ai_analyses: Mapped[list["AIAnalysis"]] = relationship(back_populates="conversation", cascade="all, delete-orphan")
+    outbound_channel_links: Mapped[list["ConversationChannelLink"]] = relationship(
+        back_populates="source_conversation",
+        cascade="all, delete-orphan",
+        foreign_keys="ConversationChannelLink.source_conversation_id",
+    )
+    inbound_channel_links: Mapped[list["ConversationChannelLink"]] = relationship(
+        back_populates="target_conversation",
+        foreign_keys="ConversationChannelLink.target_conversation_id",
+    )
 
 
 class Message(Base):
@@ -153,6 +164,40 @@ class AIAnalysis(Base, TimestampMixin):
     ticket: Mapped["Ticket | None"] = relationship(back_populates="ai_analyses")
 
 
+class ConversationChannelLink(Base):
+    __tablename__ = "conversation_channel_links"
+    __table_args__ = (
+        Index("ix_conversation_channel_links_phone_status", "phone", "status"),
+        Index("ix_conversation_channel_links_source_target", "source_conversation_id", "target_conversation_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    customer_id: Mapped[str] = mapped_column(ForeignKey("customers.id"), index=True, nullable=False)
+    source_conversation_id: Mapped[str] = mapped_column(ForeignKey("conversations.id"), index=True, nullable=False)
+    target_conversation_id: Mapped[str | None] = mapped_column(ForeignKey("conversations.id"), index=True)
+    source_channel: Mapped[str] = mapped_column(String(40), index=True, nullable=False)
+    target_channel: Mapped[str] = mapped_column(String(40), index=True, nullable=False)
+    external_id: Mapped[str | None] = mapped_column(String(180), index=True)
+    phone: Mapped[str] = mapped_column(String(40), index=True, nullable=False)
+    lead_id: Mapped[str | None] = mapped_column(ForeignKey("leads.id"), index=True)
+    ticket_id: Mapped[str | None] = mapped_column(ForeignKey("tickets.id"), index=True)
+    status: Mapped[str] = mapped_column(String(40), index=True, default="pending", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    customer: Mapped[Customer] = relationship(back_populates="channel_links")
+    source_conversation: Mapped[Conversation] = relationship(
+        back_populates="outbound_channel_links",
+        foreign_keys=[source_conversation_id],
+    )
+    target_conversation: Mapped[Conversation | None] = relationship(
+        back_populates="inbound_channel_links",
+        foreign_keys=[target_conversation_id],
+    )
+    lead: Mapped["Lead | None"] = relationship()
+    ticket: Mapped["Ticket | None"] = relationship()
+
+
 class Lead(Base, TimestampMixin):
     __tablename__ = "leads"
 
@@ -170,6 +215,7 @@ class Lead(Base, TimestampMixin):
 
     customer: Mapped[Customer] = relationship(back_populates="leads")
     ai_analyses: Mapped[list[AIAnalysis]] = relationship(back_populates="lead", cascade="all, delete-orphan")
+    proposals: Mapped[list["Proposal"]] = relationship(back_populates="lead")
 
 
 class Ticket(Base, TimestampMixin):
@@ -190,6 +236,61 @@ class Ticket(Base, TimestampMixin):
     ai_analyses: Mapped[list[AIAnalysis]] = relationship(back_populates="ticket", cascade="all, delete-orphan")
 
 
+class Proposal(Base, TimestampMixin):
+    __tablename__ = "proposals"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    customer_id: Mapped[str | None] = mapped_column(ForeignKey("customers.id"), index=True)
+    lead_id: Mapped[str | None] = mapped_column(ForeignKey("leads.id"), index=True)
+    conversation_id: Mapped[str | None] = mapped_column(ForeignKey("conversations.id"), index=True)
+    proposal_number: Mapped[str] = mapped_column(String(40), unique=True, index=True, nullable=False)
+    status: Mapped[str] = mapped_column(String(40), index=True, default="draft", nullable=False)
+    customer_name: Mapped[str] = mapped_column(String(180), nullable=False)
+    customer_phone: Mapped[str | None] = mapped_column(String(40))
+    customer_email: Mapped[str | None] = mapped_column(String(255))
+    city: Mapped[str | None] = mapped_column(String(120), index=True)
+    state: Mapped[str | None] = mapped_column(String(2))
+    property_type: Mapped[str | None] = mapped_column(String(80))
+    average_bill: Mapped[float | None] = mapped_column(Numeric(12, 2))
+    estimated_system_power_kwp: Mapped[float | None] = mapped_column(Numeric(12, 3))
+    estimated_monthly_generation_kwh: Mapped[float | None] = mapped_column(Numeric(12, 2))
+    estimated_savings_percentage: Mapped[float | None] = mapped_column(Numeric(5, 2))
+    validity_days: Mapped[int] = mapped_column(Integer, default=7, nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text)
+    internal_notes: Mapped[str | None] = mapped_column(Text)
+    subtotal: Mapped[float] = mapped_column(Numeric(12, 2), default=0, nullable=False)
+    discount: Mapped[float] = mapped_column(Numeric(12, 2), default=0, nullable=False)
+    total_amount: Mapped[float] = mapped_column(Numeric(12, 2), default=0, nullable=False)
+    payment_conditions: Mapped[str | None] = mapped_column(Text)
+    pdf_url: Mapped[str | None] = mapped_column(String(800))
+
+    customer: Mapped[Customer | None] = relationship(back_populates="proposals")
+    lead: Mapped[Lead | None] = relationship(back_populates="proposals")
+    conversation: Mapped[Conversation | None] = relationship()
+    items: Mapped[list["ProposalItem"]] = relationship(
+        back_populates="proposal",
+        cascade="all, delete-orphan",
+        order_by="ProposalItem.sort_order",
+    )
+
+
+class ProposalItem(Base, TimestampMixin):
+    __tablename__ = "proposal_items"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    proposal_id: Mapped[str] = mapped_column(ForeignKey("proposals.id"), index=True, nullable=False)
+    category: Mapped[str] = mapped_column(String(80), index=True, nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    quantity: Mapped[float] = mapped_column(Numeric(12, 3), default=1, nullable=False)
+    unit: Mapped[str] = mapped_column(String(40), default="un", nullable=False)
+    unit_price: Mapped[float] = mapped_column(Numeric(12, 2), default=0, nullable=False)
+    total_price: Mapped[float] = mapped_column(Numeric(12, 2), default=0, nullable=False)
+    editable: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    proposal: Mapped[Proposal] = relationship(back_populates="items")
+
+
 class KnowledgeBaseArticle(Base, TimestampMixin):
     __tablename__ = "knowledge_base_articles"
 
@@ -199,6 +300,13 @@ class KnowledgeBaseArticle(Base, TimestampMixin):
     answer: Mapped[str] = mapped_column(Text, nullable=False)
     category: Mapped[str] = mapped_column(String(100), index=True, nullable=False)
     keywords: Mapped[list[str]] = mapped_column(JSONB, default=list, nullable=False)
+    video_url: Mapped[str | None] = mapped_column(String(800))
+    video_title: Mapped[str | None] = mapped_column(String(220))
+    resource_url: Mapped[str | None] = mapped_column(String(800))
+    resource_title: Mapped[str | None] = mapped_column(String(220))
+    resource_type: Mapped[str | None] = mapped_column(String(60))
+    send_video_with_answer: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    send_resource_with_answer: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     active: Mapped[bool] = mapped_column(Boolean, default=True, index=True, nullable=False)
     use_for_ai: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 

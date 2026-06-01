@@ -60,6 +60,19 @@
     return "Solis está processando sua solicitação...";
   }
 
+  function isUrl(value) {
+    return /^https:\/\/\S+$/i.test(String(value || "").trim());
+  }
+
+  function isYoutubeUrl(value) {
+    try {
+      const host = new URL(String(value || "").trim()).hostname.toLowerCase();
+      return ["youtube.com", "www.youtube.com", "youtu.be"].includes(host);
+    } catch (error) {
+      return false;
+    }
+  }
+
   const styles = document.createElement("style");
   styles.textContent = `
     .solis-embed-fab {
@@ -148,6 +161,27 @@
       justify-self: end;
       background: #ffd34d;
       color: #10243a;
+    }
+    .solis-embed-line,
+    .solis-embed-resource,
+    .solis-embed-video {
+      display: block;
+    }
+    .solis-embed-resource {
+      color: #0a6f5a;
+      overflow-wrap: anywhere;
+    }
+    .solis-embed-video {
+      width: max-content;
+      max-width: 100%;
+      margin-top: 6px;
+      border: 1px solid #d4dde8;
+      border-radius: 8px;
+      padding: 8px 10px;
+      color: #10243a;
+      background: #fff8df;
+      font-weight: 700;
+      text-decoration: none;
     }
     .solis-embed-message.processing {
       display: inline-flex;
@@ -265,7 +299,7 @@
   function addMessage(sender, text, options = {}) {
     const message = document.createElement("div");
     message.className = `solis-embed-message ${sender}${options.processing ? " processing" : ""}`;
-    message.textContent = text;
+    renderMessageContent(message, text);
     if (options.processing) {
       const dots = document.createElement("span");
       dots.className = "solis-embed-dots";
@@ -276,6 +310,28 @@
     messages.appendChild(message);
     messages.scrollTop = messages.scrollHeight;
     return message;
+  }
+
+  function renderMessageContent(container, text) {
+    String(text || "")
+      .split("\n")
+      .forEach((line) => {
+        const trimmed = line.trim();
+        if (isUrl(trimmed)) {
+          const link = document.createElement("a");
+          link.href = trimmed;
+          link.target = "_blank";
+          link.rel = "noreferrer";
+          link.className = isYoutubeUrl(trimmed) ? "solis-embed-video" : "solis-embed-resource";
+          link.textContent = isYoutubeUrl(trimmed) ? "▶ Assistir vídeo" : trimmed;
+          container.appendChild(link);
+          return;
+        }
+        const span = document.createElement("span");
+        span.className = "solis-embed-line";
+        span.textContent = line;
+        container.appendChild(span);
+      });
   }
 
   function setSendingState(nextSending) {

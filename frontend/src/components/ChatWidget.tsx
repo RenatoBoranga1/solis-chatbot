@@ -1,4 +1,4 @@
-import { Bot, FileUp, MessageCircle, Send, UserRound, X } from "lucide-react";
+import { Bot, ExternalLink, FileUp, MessageCircle, PlayCircle, Send, UserRound, X } from "lucide-react";
 import { FormEvent, useEffect, useRef, useState } from "react";
 
 import { sendChatMessage } from "../api";
@@ -59,6 +59,51 @@ function processingMessageFor(message: string) {
     return "Solis está registrando sua solicitação para encaminhamento...";
   }
   return "Solis está processando sua solicitação...";
+}
+
+function isUrl(value: string) {
+  return /^https:\/\/\S+$/i.test(value.trim());
+}
+
+function isYoutubeUrl(value: string) {
+  try {
+    const host = new URL(value.trim()).hostname.toLowerCase();
+    return ["youtube.com", "www.youtube.com", "youtu.be"].includes(host);
+  } catch {
+    return false;
+  }
+}
+
+function MessageContent({ content }: { content: string }) {
+  const lines = content.split("\n");
+  return (
+    <>
+      {lines.map((line, index) => {
+        const trimmed = line.trim();
+        if (isUrl(trimmed) && isYoutubeUrl(trimmed)) {
+          return (
+            <a className="video-link-card" href={trimmed} target="_blank" rel="noreferrer" key={`${trimmed}-${index}`}>
+              <PlayCircle size={18} />
+              <span>Assistir vídeo</span>
+              <ExternalLink size={14} />
+            </a>
+          );
+        }
+        if (isUrl(trimmed)) {
+          return (
+            <a className="resource-link" href={trimmed} target="_blank" rel="noreferrer" key={`${trimmed}-${index}`}>
+              {trimmed}
+            </a>
+          );
+        }
+        return (
+          <span className="message-line" key={`${line}-${index}`}>
+            {line}
+          </span>
+        );
+      })}
+    </>
+  );
 }
 
 export function ChatWidget() {
@@ -179,7 +224,7 @@ export function ChatWidget() {
               {message.sender === "customer" ? <UserRound size={16} /> : <Bot size={16} />}
             </span>
             <p>
-              {message.content}
+              <MessageContent content={message.content} />
               {message.processing && (
                 <span className="typing-dots" aria-hidden="true">
                   <span />
