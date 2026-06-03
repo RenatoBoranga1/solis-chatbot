@@ -1,5 +1,7 @@
 from dataclasses import dataclass
 import re
+from pathlib import Path
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -40,7 +42,7 @@ class ConversationService:
         self.db = db
         self.knowledge = KnowledgeService(db)
 
-    def handle_message(self, payload: ChatMessageIn) -> ChatMessageOut:
+    def handle_message(self, payload: ChatMessageIn, background_tasks: Any | None = None) -> ChatMessageOut:
         message_text = sanitize_text(payload.message)
         conversation = self._get_or_create_conversation(payload)
         customer = conversation.customer
@@ -55,7 +57,7 @@ class ConversationService:
         )
         self.db.add(customer_message)
         self.db.flush()
-        self._create_attachment_if_present(conversation, customer_message, payload)
+        attachment = self._create_attachment_if_present(conversation, customer_message, payload)
 
         intent_result = classify_intent(message_text)
         severity_result = classify_severity(message_text, intent_result.name)
@@ -72,8 +74,28 @@ class ConversationService:
         if attachment_reference:
             collected.setdefault("attachments", [])
             collected["attachments"] = [*collected["attachments"], attachment_reference]
+            if collected.get("flow") == "orcamento" or intent_result.name in {"orcamento", "viabilidade", "financiamento"}:
+                collected["has_energy_bill"] = "sim"
+                collected["energy_bill_status"] = "recebida_para_analise"
 
+        energy_bill_ack = self._maybe_create_energy_bill_extraction(
+            conversation,
+            customer,
+            collected,
+            message_text,
+            intent_result.name,
+            attachment,
+            payload,
+            background_tasks,
+        )
         action = self._decide_action(conversation, customer, collected, message_text, intent_result.name)
+        if energy_bill_ack and not action.handoff_required:
+            action = PersistedBotAction(
+                f"{energy_bill_ack}\n\n{action.response}",
+                created_lead_id=action.created_lead_id,
+                created_ticket_id=action.created_ticket_id,
+                next_question_key=action.next_question_key,
+            )
         conversation.collected_data = collected
         conversation.summary = summarize_collected_data(collected)
 
@@ -134,24 +156,90 @@ class ConversationService:
         conversation: Conversation,
         message: Message,
         payload: ChatMessageIn,
-    ) -> None:
+    ) -> Attachment | None:
         file_url = payload.attachment_url
         if not file_url and payload.media_id:
             file_url = f"whatsapp://media/{payload.media_id}"
 
         if not file_url:
-            return
+            return None
 
-        self.db.add(
-            Attachment(
-                message_id=message.id,
-                conversation_id=conversation.id,
-                provider=self._message_provider(payload),
-                provider_media_id=payload.media_id,
-                file_type=payload.media_type or "unknown",
-                file_url=file_url,
-            )
+        attachment = Attachment(
+            message_id=message.id,
+            conversation_id=conversation.id,
+            provider=self._message_provider(payload) or "site",
+            provider_media_id=payload.media_id,
+            file_type=payload.media_type or self._infer_media_type(file_url),
+            file_url=file_url,
         )
+        self.db.add(attachment)
+        self.db.flush()
+        return attachment
+
+    def _maybe_create_energy_bill_extraction(
+        self,
+        conversation: Conversation,
+        customer: Customer | None,
+        collected: dict,
+        message_text: str,
+        intent: str,
+        attachment: Attachment | None,
+        payload: ChatMessageIn,
+        background_tasks: Any | None,
+    ) -> str | None:
+        if not attachment or not customer or not customer.lgpd_consent:
+            return None
+
+        from app.services.energy_bill_extractor import (
+            EnergyBillExtractorService,
+            process_energy_bill_extraction_background,
+        )
+
+        extractor = EnergyBillExtractorService(self.db)
+        if not extractor.is_possible_energy_bill_attachment(attachment, conversation, message_text, intent, collected):
+            return None
+
+        origin = self._message_origin(payload)
+        extraction = extractor.create_pending_from_attachment(
+            attachment,
+            conversation=conversation,
+            customer=customer,
+            origin=origin,
+            message_text=message_text,
+        )
+        collected.update(
+            {
+                "has_energy_bill": "sim",
+                "bill_file_received": True,
+                "energy_bill_extraction_id": extraction.id,
+                "energy_bill_status": extraction.status,
+                "bill_extraction_origin": extraction.origin,
+                "bill_needs_human_review": extraction.needs_human_review,
+            }
+        )
+        if background_tasks:
+            background_tasks.add_task(process_energy_bill_extraction_background, extraction.id)
+        return (
+            "Recebi sua conta de energia e registrei para leitura inteligente. "
+            "A equipe da Solar Solucoes podera revisar os dados extraidos antes de preparar a proposta."
+        )
+
+    @staticmethod
+    def _infer_media_type(file_url: str) -> str:
+        suffix = Path(file_url.split("?", 1)[0]).suffix.lower()
+        if suffix == ".pdf":
+            return "pdf"
+        if suffix in {".png", ".jpg", ".jpeg", ".webp"}:
+            return "image"
+        return "unknown"
+
+    @staticmethod
+    def _message_origin(payload: ChatMessageIn) -> str:
+        if payload.channel == "whatsapp" or payload.provider == "whatsapp":
+            return "whatsapp"
+        if payload.channel == "site":
+            return "chatbot"
+        return payload.channel or "api"
 
     def _decide_action(
         self,

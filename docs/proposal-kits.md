@@ -49,14 +49,15 @@ Se o kit tiver itens, a proposta gerada copia esses itens para `proposal_items`.
 
 Quando a equipe clica em `Gerar proposta` a partir de um lead:
 
-1. O backend estima geracao mensal e potencia a partir da conta media.
-2. O `ProposalKitService` busca kits ativos.
-3. Primeiro tenta encontrar kit por faixa de potencia.
-4. Se nao encontrar, tenta por faixa de consumo/geracao.
-5. Se nao encontrar, escolhe o kit imediatamente acima.
-6. Se ainda nao houver, escolhe o maior kit ativo.
-7. Se nao houver kits, usa a tabela de precos atual.
-8. Se nao houver tabela, cria itens padrao zerados.
+1. Se o lead tiver `average_consumption_kwh` extraido da conta de energia, o backend usa esse consumo como referencia principal.
+2. Se nao houver consumo extraido, o backend estima geracao mensal e potencia a partir da conta media em reais.
+3. O `ProposalKitService` busca kits ativos.
+4. Primeiro tenta encontrar kit por faixa de potencia.
+5. Se nao encontrar, tenta por faixa de consumo/geracao.
+6. Se nao encontrar, escolhe o kit imediatamente acima.
+7. Se ainda nao houver, escolhe o maior kit ativo.
+8. Se nao houver kits, usa a tabela de precos atual.
+9. Se nao houver tabela, cria itens padrao zerados.
 
 Exemplo:
 
@@ -94,6 +95,18 @@ Retorno esperado:
 ```
 
 A simulacao nao grava dados reais nem altera propostas.
+
+Para simular por consumo extraido:
+
+```json
+{
+  "average_bill": 512.34,
+  "estimated_monthly_generation_kwh": 429,
+  "estimated_power_kwp": 3.178
+}
+```
+
+Esse e o mesmo caminho usado quando uma conta de energia confirmada e aplicada ao lead.
 
 ## Proposta e PDF
 
@@ -169,4 +182,3 @@ Antes de vender a solucao:
 - validar link seguro;
 - simular envio por WhatsApp/e-mail;
 - confirmar que a proposta fica em rascunho.
-

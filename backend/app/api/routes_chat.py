@@ -1,24 +1,73 @@
-from fastapi import APIRouter, Depends, HTTPException
+import uuid
+from pathlib import Path
+
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.api.deps import get_current_user
+from app.core.config import settings
 from app.db.session import get_db
 from app.models import Conversation
-from app.schemas import AssignIn, ChatMessageIn, ChatMessageOut, ContinueWhatsAppIn, ContinueWhatsAppOut, ConversationOut, HandoffIn
+from app.schemas import (
+    AssignIn,
+    ChatAttachmentOut,
+    ChatMessageIn,
+    ChatMessageOut,
+    ContinueWhatsAppIn,
+    ContinueWhatsAppOut,
+    ConversationOut,
+    HandoffIn,
+)
 from app.services.conversation import ConversationService
 from app.services.omnichannel import OmnichannelService
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
 
+CHAT_ATTACHMENT_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg", ".webp"}
+CHAT_ATTACHMENT_TYPES = {
+    ".pdf": "pdf",
+    ".png": "image",
+    ".jpg": "image",
+    ".jpeg": "image",
+    ".webp": "image",
+}
+
 
 @router.post("/message", response_model=ChatMessageOut)
-def message(payload: ChatMessageIn, db: Session = Depends(get_db)) -> ChatMessageOut:
+def message(
+    payload: ChatMessageIn,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+) -> ChatMessageOut:
     service = ConversationService(db)
     try:
-        return service.handle_message(payload)
+        return service.handle_message(payload, background_tasks=background_tasks)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/attachments", response_model=ChatAttachmentOut, status_code=status.HTTP_201_CREATED)
+async def upload_chat_attachment(file: UploadFile = File(...)) -> ChatAttachmentOut:
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in CHAT_ATTACHMENT_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="Envie PDF ou imagem nos formatos PNG, JPG ou WEBP.")
+
+    content = await file.read()
+    max_bytes = settings.energy_bill_max_file_size_mb * 1024 * 1024
+    if len(content) > max_bytes:
+        raise HTTPException(status_code=413, detail="Arquivo maior que o limite permitido.")
+
+    storage_dir = Path(settings.chat_attachment_storage_path)
+    storage_dir.mkdir(parents=True, exist_ok=True)
+    safe_name = f"{uuid.uuid4()}{suffix}"
+    path = storage_dir / safe_name
+    path.write_bytes(content)
+    return ChatAttachmentOut(
+        attachment_url=str(path),
+        file_name=Path(file.filename or safe_name).name,
+        media_type=CHAT_ATTACHMENT_TYPES.get(suffix, "unknown"),
+    )
 
 
 @router.get("/conversations", response_model=list[ConversationOut])

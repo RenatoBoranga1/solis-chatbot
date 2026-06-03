@@ -1,7 +1,7 @@
 import { Bot, ExternalLink, FileUp, MessageCircle, PlayCircle, Send, UserRound, X } from "lucide-react";
 import { FormEvent, useEffect, useRef, useState } from "react";
 
-import { sendChatMessage } from "../api";
+import { sendChatMessage, uploadChatAttachment } from "../api";
 import type { ChatMessage, QuickReply } from "../types";
 
 const initialMessage =
@@ -115,7 +115,7 @@ export function ChatWidget() {
     { id: "welcome", sender: "bot", content: initialMessage },
   ]);
   const [loading, setLoading] = useState(false);
-  const [attachmentName, setAttachmentName] = useState<string | undefined>();
+  const [selectedFile, setSelectedFile] = useState<File | undefined>();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -123,12 +123,12 @@ export function ChatWidget() {
     messagesEndRef.current?.scrollIntoView({ block: "end" });
   }, [messages]);
 
-  async function submitMessage(message: string, attachmentUrl?: string) {
+  async function submitMessage(message: string, attachment?: File) {
     const trimmed = message.trim();
-    if ((!trimmed && !attachmentUrl) || loading) return;
+    if ((!trimmed && !attachment) || loading) return;
 
     const startedAt = Date.now();
-    const customerMessage = trimmed || `Arquivo enviado: ${attachmentUrl}`;
+    const customerMessage = trimmed || `Arquivo enviado: ${attachment?.name}`;
     const processingId = `processing-${crypto.randomUUID()}`;
     setMessages((current) => [
       ...current,
@@ -141,14 +141,16 @@ export function ChatWidget() {
       },
     ]);
     setInput("");
-    setAttachmentName(undefined);
+    setSelectedFile(undefined);
     setLoading(true);
 
     try {
+      const uploadedAttachment = attachment ? await uploadChatAttachment(attachment) : undefined;
       const response = await sendChatMessage({
         message: customerMessage,
         conversationId,
-        attachmentUrl,
+        attachmentUrl: uploadedAttachment?.attachment_url,
+        mediaType: uploadedAttachment?.media_type,
       });
       const elapsed = Date.now() - startedAt;
       const remainingDelay = Math.min(
@@ -182,12 +184,12 @@ export function ChatWidget() {
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    void submitMessage(input, attachmentName);
+    void submitMessage(input, selectedFile);
   }
 
   function handleFileSelect(file?: File) {
     if (!file) return;
-    setAttachmentName(file.name);
+    setSelectedFile(file);
     setInput((current) => current || `Estou enviando o arquivo ${file.name}`);
   }
 
@@ -248,7 +250,7 @@ export function ChatWidget() {
         </div>
       )}
 
-      {attachmentName && <div className="attachment-pill">Arquivo: {attachmentName}</div>}
+      {selectedFile && <div className="attachment-pill">Arquivo: {selectedFile.name}</div>}
 
       <form className="solis-widget__composer" onSubmit={handleSubmit}>
         <input

@@ -60,6 +60,8 @@ Confirmar tabelas:
 - `proposal_events`.
 - `proposal_followups`.
 - `company_settings`.
+- `energy_bill_extractions`.
+- `energy_bill_consumption_history`.
 
 ## Omnichannel
 
@@ -96,6 +98,25 @@ Confirmar tabelas:
 - Em produção, armazenar PDFs em storage privado, como S3 ou Cloudflare R2.
 - Para envio por WhatsApp fora da janela de 24 horas, criar template aprovado pela Meta.
 - Reforçar processo interno de revisão humana antes de enviar proposta ao cliente.
+
+## Leitor Inteligente de Conta de Energia
+
+- Configurar `ENERGY_BILL_EXTRACTION_ENABLED=true`.
+- Manter `ENERGY_BILL_OCR_ENABLED=false` ate homologar OCR com seguranca.
+- Manter `ENERGY_BILL_ALLOW_EXTERNAL_AI=false` ate revisar LGPD, contrato e politica de privacidade.
+- Configurar `ENERGY_BILL_MAX_FILE_SIZE_MB` conforme limite operacional.
+- Configurar `ENERGY_BILL_STORE_RAW_TEXT=false` em producao, salvo necessidade formal e base legal.
+- Configurar `ENERGY_BILL_STORAGE_PATH` em volume persistente ou storage privado.
+- Configurar `CHAT_ATTACHMENT_STORAGE_PATH` em volume persistente ou storage privado para arquivos enviados pelo widget.
+- Testar upload de PDF/TXT/imagem pelo painel `Contas`.
+- Testar envio de PDF/imagem pelo widget em fluxo de orcamento e confirmar `origin=chatbot`.
+- Confirmar que `conversation.collected_data` e `lead.extra` recebem consumo, valor, distribuidora, confianca e status da leitura.
+- Para WhatsApp, baixar midia da Meta para storage privado antes de habilitar leitura automatica completa de `origin=whatsapp`.
+- Confirmar que CPF/CNPJ aparece mascarado.
+- Confirmar que extracoes de baixa confianca ficam como `needs_review`.
+- Confirmar que aplicar extracao ao lead preenche `average_consumption_kwh` e `utility_company`.
+- Confirmar que proposta gerada usa consumo medio extraido para recomendar kit.
+- Definir rotina de limpeza/retencao de anexos conforme LGPD.
 
 ## Base multimídia
 

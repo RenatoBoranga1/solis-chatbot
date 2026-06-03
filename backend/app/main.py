@@ -9,6 +9,7 @@ from app.api import (
     routes_auth,
     routes_chat,
     routes_dashboard,
+    routes_energy_bills,
     routes_knowledge,
     routes_leads,
     routes_proposal_kits,
@@ -74,3 +75,4 @@ app.include_router(routes_knowledge.router)
 app.include_router(routes_dashboard.router)
 app.include_router(routes_whatsapp.router)
 app.include_router(routes_ai_analysis.router)
+app.include_router(routes_energy_bills.router)

@@ -50,6 +50,7 @@ class Customer(Base, TimestampMixin):
     tickets: Mapped[list["Ticket"]] = relationship(back_populates="customer")
     channel_links: Mapped[list["ConversationChannelLink"]] = relationship(back_populates="customer")
     proposals: Mapped[list["Proposal"]] = relationship(back_populates="customer")
+    energy_bill_extractions: Mapped[list["EnergyBillExtraction"]] = relationship(back_populates="customer")
 
 
 class Conversation(Base, TimestampMixin):
@@ -73,6 +74,7 @@ class Conversation(Base, TimestampMixin):
     handoffs: Mapped[list["Handoff"]] = relationship(back_populates="conversation", cascade="all, delete-orphan")
     attachments: Mapped[list["Attachment"]] = relationship(back_populates="conversation", cascade="all, delete-orphan")
     ai_analyses: Mapped[list["AIAnalysis"]] = relationship(back_populates="conversation", cascade="all, delete-orphan")
+    energy_bill_extractions: Mapped[list["EnergyBillExtraction"]] = relationship(back_populates="conversation")
     outbound_channel_links: Mapped[list["ConversationChannelLink"]] = relationship(
         back_populates="source_conversation",
         cascade="all, delete-orphan",
@@ -117,6 +119,7 @@ class Attachment(Base):
 
     message: Mapped[Message] = relationship(back_populates="attachments")
     conversation: Mapped[Conversation] = relationship(back_populates="attachments")
+    energy_bill_extractions: Mapped[list["EnergyBillExtraction"]] = relationship(back_populates="attachment")
 
 
 class WebhookEvent(Base):
@@ -216,6 +219,78 @@ class Lead(Base, TimestampMixin):
     customer: Mapped[Customer] = relationship(back_populates="leads")
     ai_analyses: Mapped[list[AIAnalysis]] = relationship(back_populates="lead", cascade="all, delete-orphan")
     proposals: Mapped[list["Proposal"]] = relationship(back_populates="lead")
+    energy_bill_extractions: Mapped[list["EnergyBillExtraction"]] = relationship(back_populates="lead")
+
+
+class EnergyBillExtraction(Base, TimestampMixin):
+    __tablename__ = "energy_bill_extractions"
+    __table_args__ = (
+        Index("ix_energy_bill_extractions_status_confidence", "status", "confidence_score"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    conversation_id: Mapped[str | None] = mapped_column(ForeignKey("conversations.id"), index=True)
+    customer_id: Mapped[str | None] = mapped_column(ForeignKey("customers.id"), index=True)
+    lead_id: Mapped[str | None] = mapped_column(ForeignKey("leads.id"), index=True)
+    attachment_id: Mapped[str | None] = mapped_column(ForeignKey("attachments.id"), index=True)
+    status: Mapped[str] = mapped_column(String(40), index=True, default="pending", nullable=False)
+    source: Mapped[str] = mapped_column(String(40), index=True, default="manual", nullable=False)
+    origin: Mapped[str] = mapped_column(String(40), index=True, default="api", nullable=False)
+    file_name: Mapped[str | None] = mapped_column(String(260))
+    file_type: Mapped[str | None] = mapped_column(String(80), index=True)
+    file_url: Mapped[str | None] = mapped_column(String(800))
+    distributor: Mapped[str | None] = mapped_column(String(180), index=True)
+    customer_name: Mapped[str | None] = mapped_column(String(180))
+    customer_document_masked: Mapped[str | None] = mapped_column(String(80))
+    installation_number: Mapped[str | None] = mapped_column(String(120), index=True)
+    city: Mapped[str | None] = mapped_column(String(120), index=True)
+    state: Mapped[str | None] = mapped_column(String(2), index=True)
+    reference_month: Mapped[str | None] = mapped_column(String(20), index=True)
+    due_date: Mapped[str | None] = mapped_column(String(20))
+    current_consumption_kwh: Mapped[float | None] = mapped_column(Numeric(12, 2))
+    current_bill_amount: Mapped[float | None] = mapped_column(Numeric(12, 2))
+    average_consumption_kwh: Mapped[float | None] = mapped_column(Numeric(12, 2))
+    average_bill_amount: Mapped[float | None] = mapped_column(Numeric(12, 2))
+    min_consumption_kwh: Mapped[float | None] = mapped_column(Numeric(12, 2))
+    max_consumption_kwh: Mapped[float | None] = mapped_column(Numeric(12, 2))
+    estimated_system_power_kwp: Mapped[float | None] = mapped_column(Numeric(12, 3))
+    estimated_monthly_generation_kwh: Mapped[float | None] = mapped_column(Numeric(12, 2))
+    estimated_monthly_savings: Mapped[float | None] = mapped_column(Numeric(12, 2))
+    confidence_score: Mapped[float] = mapped_column(Numeric(5, 4), default=0, index=True, nullable=False)
+    needs_human_review: Mapped[bool] = mapped_column(Boolean, default=True, index=True, nullable=False)
+    missing_fields: Mapped[list[str]] = mapped_column(JSONB, default=list, nullable=False)
+    parsed_fields: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    raw_extraction: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    raw_text_excerpt: Mapped[str | None] = mapped_column(Text)
+    error_message: Mapped[str | None] = mapped_column(Text)
+    confirmed_by: Mapped[str | None] = mapped_column(ForeignKey("users.id"), index=True)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    conversation: Mapped[Conversation | None] = relationship(back_populates="energy_bill_extractions")
+    customer: Mapped[Customer | None] = relationship(back_populates="energy_bill_extractions")
+    lead: Mapped[Lead | None] = relationship(back_populates="energy_bill_extractions")
+    attachment: Mapped[Attachment | None] = relationship(back_populates="energy_bill_extractions")
+    history: Mapped[list["EnergyBillConsumptionHistory"]] = relationship(
+        back_populates="extraction",
+        cascade="all, delete-orphan",
+        order_by="EnergyBillConsumptionHistory.period",
+    )
+
+
+class EnergyBillConsumptionHistory(Base):
+    __tablename__ = "energy_bill_consumption_history"
+    __table_args__ = (
+        Index("ix_energy_bill_history_extraction_period", "extraction_id", "period"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    extraction_id: Mapped[str] = mapped_column(ForeignKey("energy_bill_extractions.id"), index=True, nullable=False)
+    period: Mapped[str] = mapped_column(String(20), index=True, nullable=False)
+    consumption_kwh: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+    bill_amount: Mapped[float | None] = mapped_column(Numeric(12, 2))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    extraction: Mapped[EnergyBillExtraction] = relationship(back_populates="history")
 
 
 class Ticket(Base, TimestampMixin):

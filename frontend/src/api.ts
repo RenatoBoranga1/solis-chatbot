@@ -6,6 +6,8 @@ import type {
   ContinueWhatsAppResponse,
   DashboardAIInsights,
   DashboardMetrics,
+  EnergyBillExtraction,
+  EnergyBillParsedData,
   KnowledgeArticle,
   Lead,
   Proposal,
@@ -29,6 +31,7 @@ export async function sendChatMessage(input: {
   message: string;
   conversationId?: string;
   attachmentUrl?: string;
+  mediaType?: string;
 }): Promise<ChatResponse> {
   try {
     const response = await fetch(`${API_BASE_URL}/chat/message`, {
@@ -39,6 +42,7 @@ export async function sendChatMessage(input: {
         conversation_id: input.conversationId,
         message: input.message,
         attachment_url: input.attachmentUrl,
+        media_type: input.mediaType,
       }),
     });
     if (!response.ok) throw new Error("Não foi possível enviar a mensagem.");
@@ -46,6 +50,30 @@ export async function sendChatMessage(input: {
   } catch (error) {
     if (!ENABLE_DEMO_FALLBACK) throw error;
     return buildDemoResponse(input.message, input.conversationId);
+  }
+}
+
+export async function uploadChatAttachment(file: File): Promise<{
+  attachment_url: string;
+  file_name: string;
+  media_type: string;
+}> {
+  const formData = new FormData();
+  formData.append("file", file);
+  try {
+    const response = await fetch(`${API_BASE_URL}/chat/attachments`, {
+      method: "POST",
+      body: formData,
+    });
+    if (!response.ok) throw new Error("Nao foi possivel enviar o anexo.");
+    return response.json();
+  } catch (error) {
+    if (!ENABLE_DEMO_FALLBACK) throw error;
+    return {
+      attachment_url: file.name,
+      file_name: file.name,
+      media_type: file.type.startsWith("image/") ? "image" : file.name.toLowerCase().endsWith(".pdf") ? "pdf" : "unknown",
+    };
   }
 }
 
@@ -167,6 +195,18 @@ async function adminFetch<T>(path: string, token: string, init?: RequestInit): P
   return response.json();
 }
 
+async function adminUpload<T>(path: string, token: string, formData: FormData): Promise<T> {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+    body: formData,
+  });
+  if (!response.ok) throw new Error(`Falha ao enviar arquivo para ${path}.`);
+  return response.json();
+}
+
 export const adminApi = {
   metrics: (token: string) => adminFetch<DashboardMetrics>("/dashboard/metrics", token),
   aiInsights: (token: string) => adminFetch<DashboardAIInsights>("/ai/dashboard/insights", token),
@@ -177,6 +217,7 @@ export const adminApi = {
   proposalFollowups: (token: string) => adminFetch<ProposalFollowUp[]>("/proposals/followups", token),
   proposalPriceItems: (token: string) => adminFetch<ProposalPriceItem[]>("/proposal-price-items", token),
   proposalKits: (token: string) => adminFetch<ProposalKit[]>("/proposal-kits", token),
+  energyBills: (token: string) => adminFetch<EnergyBillExtraction[]>("/energy-bills", token),
   companySettings: (token: string) => adminFetch<CompanySettings>("/company-settings", token),
   knowledge: (token: string) => adminFetch<KnowledgeArticle[]>("/knowledge", token),
   createProposal: (token: string, payload: Partial<Proposal>) =>
@@ -246,6 +287,23 @@ export const adminApi = {
     adminFetch<ProposalKit>(`/proposal-kits/${kitId}/items/${itemId}`, token, { method: "DELETE" }),
   simulateProposalKit: (token: string, payload: { average_bill?: number | null; estimated_monthly_generation_kwh?: number | null; estimated_power_kwp?: number | null }) =>
     adminFetch<ProposalKitSimulation>("/proposal-kits/simulate", token, { method: "POST", body: JSON.stringify(payload) }),
+  parseEnergyBillText: (token: string, rawText: string) =>
+    adminFetch<EnergyBillParsedData>("/energy-bills/parse-text", token, {
+      method: "POST",
+      body: JSON.stringify({ raw_text: rawText, metadata: {} }),
+    }),
+  uploadEnergyBill: (token: string, formData: FormData) =>
+    adminUpload<EnergyBillExtraction>("/energy-bills/extract", token, formData),
+  updateEnergyBill: (token: string, id: string, payload: Partial<EnergyBillExtraction>) =>
+    adminFetch<EnergyBillExtraction>(`/energy-bills/${id}`, token, { method: "PUT", body: JSON.stringify(payload) }),
+  confirmEnergyBill: (token: string, id: string, payload: Partial<EnergyBillExtraction> = {}) =>
+    adminFetch<EnergyBillExtraction>(`/energy-bills/${id}/confirm`, token, { method: "POST", body: JSON.stringify(payload) }),
+  applyEnergyBillToLead: (token: string, id: string, leadId: string) =>
+    adminFetch<Lead>(`/energy-bills/${id}/apply-to-lead/${leadId}`, token, { method: "POST" }),
+  generateProposalFromEnergyBill: (token: string, id: string) =>
+    adminFetch<Proposal>(`/energy-bills/${id}/generate-proposal`, token, { method: "POST" }),
+  discardEnergyBill: (token: string, id: string) =>
+    adminFetch<EnergyBillExtraction>(`/energy-bills/${id}/discard`, token, { method: "POST" }),
   updateCompanySettings: (token: string, payload: Partial<CompanySettings>) =>
     adminFetch<CompanySettings>("/company-settings", token, { method: "PUT", body: JSON.stringify(payload) }),
   createKnowledge: (token: string, payload: Omit<KnowledgeArticle, "id" | "created_at">) =>

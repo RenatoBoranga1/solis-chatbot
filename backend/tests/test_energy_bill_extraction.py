@@ -1,0 +1,463 @@
+import tempfile
+import unittest
+from pathlib import Path
+
+from fastapi.testclient import TestClient
+
+from app.api.deps import get_current_user
+from app.core.config import settings
+from app.db.session import get_db
+from app.main import app
+from app.models import (
+    Attachment,
+    AuditLog,
+    Conversation,
+    Customer,
+    EnergyBillExtraction,
+    Lead,
+    Proposal,
+    ProposalKit,
+    ProposalKitItem,
+    User,
+    utc_now,
+)
+from app.schemas import ChatMessageIn
+from app.services.conversation import ConversationService
+from app.services.energy_bill_extractor import EnergyBillExtractorService
+from app.services.energy_bill_parsers.base import sanitize_raw_excerpt
+
+
+SAMPLE_BILL_TEXT = """
+CPFL Paulista
+Cliente: Renato Solar
+CPF 123.456.789-01
+Instalacao: 123456789
+Cidade: Campinas SP
+Referencia: 05/2026
+Vencimento: 12/06/2026
+Consumo faturado: 450 kWh
+Total a pagar R$ 512,34
+Historico de consumo
+Jan/2026 390 kWh
+Fev/2026 410 kWh
+Mar/2026 440 kWh
+Abr/2026 455 kWh
+Mai/2026 450 kWh
+"""
+
+
+class FakeScalarResult:
+    def __init__(self, items):
+        self.items = list(items)
+
+    def all(self):
+        return self.items
+
+
+class FakeDb:
+    def __init__(self, objects=None, scalar_queue=None, scalars_queue=None):
+        self.objects = objects or {}
+        self.scalar_queue = list(scalar_queue or [])
+        self.scalars_queue = [list(items) for items in (scalars_queue or [])]
+        self.added = []
+        self.deleted = []
+        self.commits = 0
+
+    def get(self, model, item_id):
+        return self.objects.get((model, item_id))
+
+    def scalar(self, _statement):
+        if self.scalar_queue:
+            return self.scalar_queue.pop(0)
+        for item in reversed(self.added):
+            if isinstance(item, EnergyBillExtraction):
+                return item
+        return None
+
+    def scalars(self, _statement):
+        if self.scalars_queue:
+            return FakeScalarResult(self.scalars_queue.pop(0))
+        return FakeScalarResult([])
+
+    def add(self, obj):
+        self.added.append(obj)
+
+    def flush(self):
+        for index, obj in enumerate(self.added, start=1):
+            if getattr(obj, "id", None) is None:
+                setattr(obj, "id", f"fake-id-{index}")
+            if hasattr(obj, "created_at") and getattr(obj, "created_at", None) is None:
+                setattr(obj, "created_at", utc_now())
+
+    def commit(self):
+        self.commits += 1
+
+    def rollback(self):
+        return None
+
+    def refresh(self, _obj):
+        return None
+
+
+def admin_user() -> User:
+    return User(
+        id="user-admin",
+        name="Admin",
+        email="admin@solarsolucoes.com.br",
+        password_hash="hash",
+        role="admin",
+        active=True,
+        created_at=utc_now(),
+    )
+
+
+def customer_fixture() -> Customer:
+    return Customer(
+        id="customer-1",
+        name="Cliente",
+        phone="5511999999999",
+        email="cliente@example.com",
+        city="Campinas",
+        state="SP",
+        lgpd_consent=True,
+        created_at=utc_now(),
+    )
+
+
+def lead_fixture(customer: Customer) -> Lead:
+    return Lead(
+        id="lead-1",
+        customer_id=customer.id,
+        conversation_id="conversation-1",
+        property_type="residencia",
+        average_bill=None,
+        utility_company=None,
+        financing_interest=True,
+        status="Novo orcamento",
+        extra={},
+        created_at=utc_now(),
+    )
+
+
+def conversation_fixture(customer: Customer) -> Conversation:
+    conversation = Conversation(
+        id="conversation-1",
+        customer_id=customer.id,
+        channel="site",
+        status="commercial_triage",
+        intent="orcamento",
+        severity="baixa",
+        collected_data={"flow": "orcamento"},
+        created_at=utc_now(),
+    )
+    conversation.customer = customer
+    return conversation
+
+
+def kit_fixture() -> ProposalKit:
+    kit = ProposalKit(
+        id="kit-1",
+        name="Kit 3,30 kWp",
+        min_monthly_consumption_kwh=400,
+        max_monthly_consumption_kwh=520,
+        min_power_kwp=2.8,
+        max_power_kwp=3.8,
+        suggested_power_kwp=3.3,
+        estimated_monthly_generation_kwh=460,
+        module_count=6,
+        module_power_wp=550,
+        inverter_power_kw=4,
+        base_price=18000,
+        active=True,
+        sort_order=0,
+        created_at=utc_now(),
+    )
+    kit.items = [
+        ProposalKitItem(
+            id="kit-item-1",
+            kit_id=kit.id,
+            category="kit_fotovoltaico",
+            description="Kit fotovoltaico 3,30 kWp",
+            quantity=1,
+            unit="kit",
+            unit_price=18000,
+            total_price=18000,
+            sort_order=0,
+            created_at=utc_now(),
+        )
+    ]
+    return kit
+
+
+class EnergyBillParserTest(unittest.TestCase):
+    def test_generic_parser_extracts_consumption_value_and_history(self):
+        result = EnergyBillExtractorService(FakeDb()).parse_energy_bill_text(SAMPLE_BILL_TEXT)
+
+        self.assertEqual(result.distributor, "CPFL")
+        self.assertEqual(result.installation_number, "123456789")
+        self.assertEqual(result.current_consumption_kwh, 450)
+        self.assertEqual(result.current_bill_amount, 512.34)
+        self.assertGreaterEqual(len(result.history), 5)
+        self.assertEqual(result.average_consumption_kwh, 429)
+
+    def test_sensitive_document_is_masked(self):
+        result = EnergyBillExtractorService(FakeDb()).parse_energy_bill_text(SAMPLE_BILL_TEXT)
+
+        self.assertEqual(result.customer_document_masked, "***.456.789-**")
+        self.assertNotIn("123.456.789-01", sanitize_raw_excerpt(SAMPLE_BILL_TEXT))
+
+    def test_confidence_high_and_low(self):
+        high = EnergyBillExtractorService(FakeDb()).parse_energy_bill_text(SAMPLE_BILL_TEXT)
+        low = EnergyBillExtractorService(FakeDb()).parse_energy_bill_text("Consumo 120 kWh")
+
+        self.assertGreaterEqual(high.confidence_score, settings.energy_bill_min_confidence_auto_apply)
+        self.assertLess(low.confidence_score, settings.energy_bill_min_confidence_auto_apply)
+        self.assertTrue(low.needs_human_review)
+
+    def test_ocr_disabled_does_not_break(self):
+        original = settings.energy_bill_ocr_enabled
+        settings.energy_bill_ocr_enabled = False
+        try:
+            self.assertEqual(EnergyBillExtractorService(FakeDb()).extract_text_with_ocr("conta.png"), "")
+        finally:
+            settings.energy_bill_ocr_enabled = original
+
+    def test_rejects_invalid_file_type(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "conta.exe"
+            path.write_text("Consumo 100 kWh", encoding="utf-8")
+            with self.assertRaises(ValueError):
+                EnergyBillExtractorService(FakeDb()).extract_from_file(str(path))
+
+
+class EnergyBillServiceTest(unittest.TestCase):
+    def test_detects_possible_energy_bill_attachment_in_budget_context(self):
+        customer = customer_fixture()
+        conversation = conversation_fixture(customer)
+        attachment = Attachment(
+            id="attachment-1",
+            message_id="message-1",
+            conversation_id=conversation.id,
+            provider="site",
+            file_type="pdf",
+            file_url="conta-de-energia.pdf",
+            created_at=utc_now(),
+        )
+
+        detected = EnergyBillExtractorService(FakeDb()).is_possible_energy_bill_attachment(
+            attachment,
+            conversation,
+            "Segue minha conta de energia",
+            "orcamento",
+            conversation.collected_data,
+        )
+
+        self.assertTrue(detected)
+
+    def test_conversation_creates_pending_extraction_for_energy_bill_attachment(self):
+        customer = customer_fixture()
+        lead = lead_fixture(customer)
+        conversation = conversation_fixture(customer)
+        db = FakeDb(
+            objects={(Conversation, conversation.id): conversation, (Customer, customer.id): customer, (Lead, lead.id): lead},
+            scalar_queue=[None, lead],
+        )
+
+        response = ConversationService(db).handle_message(
+            ChatMessageIn(
+                conversation_id=conversation.id,
+                customer_id=customer.id,
+                message="Segue minha conta de energia em PDF",
+                attachment_url="storage/chat_attachments/conta-energia.pdf",
+                media_type="pdf",
+            )
+        )
+
+        attachments = [item for item in db.added if isinstance(item, Attachment)]
+        extractions = [item for item in db.added if isinstance(item, EnergyBillExtraction)]
+        self.assertEqual(len(attachments), 1)
+        self.assertEqual(len(extractions), 1)
+        self.assertEqual(extractions[0].origin, "chatbot")
+        self.assertEqual(extractions[0].status, "processing")
+        self.assertIn("Recebi sua conta de energia", response.response)
+        self.assertEqual(conversation.collected_data["energy_bill_extraction_id"], extractions[0].id)
+
+    def test_conversation_does_not_create_extraction_without_lgpd_consent(self):
+        customer = customer_fixture()
+        customer.lgpd_consent = False
+        conversation = conversation_fixture(customer)
+        db = FakeDb(objects={(Conversation, conversation.id): conversation, (Customer, customer.id): customer}, scalar_queue=[conversation])
+
+        ConversationService(db).handle_message(
+            ChatMessageIn(
+                conversation_id=conversation.id,
+                customer_id=customer.id,
+                message="Segue minha conta de energia",
+                attachment_url="storage/chat_attachments/conta.pdf",
+                media_type="pdf",
+            )
+        )
+
+        self.assertFalse([item for item in db.added if isinstance(item, EnergyBillExtraction)])
+
+    def test_unrelated_attachment_does_not_create_energy_bill_extraction(self):
+        customer = customer_fixture()
+        conversation = conversation_fixture(customer)
+        conversation.intent = "suporte"
+        conversation.status = "open"
+        conversation.collected_data = {"flow": "suporte"}
+        db = FakeDb(objects={(Conversation, conversation.id): conversation, (Customer, customer.id): customer}, scalar_queue=[conversation])
+
+        ConversationService(db).handle_message(
+            ChatMessageIn(
+                conversation_id=conversation.id,
+                customer_id=customer.id,
+                message="Segue uma foto do local",
+                attachment_url="storage/chat_attachments/foto.png",
+                media_type="image",
+            )
+        )
+
+        self.assertFalse([item for item in db.added if isinstance(item, EnergyBillExtraction)])
+
+    def test_pending_extraction_processing_updates_conversation_and_lead(self):
+        customer = customer_fixture()
+        lead = lead_fixture(customer)
+        conversation = conversation_fixture(customer)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "conta.txt"
+            path.write_text(SAMPLE_BILL_TEXT, encoding="utf-8")
+            attachment = Attachment(
+                id="attachment-1",
+                message_id="message-1",
+                conversation_id=conversation.id,
+                provider="site",
+                file_type="txt",
+                file_url=str(path),
+                created_at=utc_now(),
+            )
+            db = FakeDb(
+                objects={
+                    (Attachment, attachment.id): attachment,
+                    (Conversation, conversation.id): conversation,
+                    (Customer, customer.id): customer,
+                    (Lead, lead.id): lead,
+                },
+                scalar_queue=[None, lead],
+            )
+            service = EnergyBillExtractorService(db)
+            pending = service.create_pending_from_attachment(attachment, conversation, customer, origin="chatbot")
+
+            processed = service.process_pending_extraction(pending.id)
+
+        self.assertEqual(processed.status, "extracted")
+        self.assertEqual(processed.distributor, "CPFL")
+        self.assertEqual(conversation.collected_data["utility_company"], "CPFL")
+        self.assertEqual(conversation.collected_data["current_consumption_kwh"], 450.0)
+        self.assertEqual(lead.utility_company, "CPFL")
+        self.assertEqual(lead.extra["bill_extraction_origin"], "chatbot")
+
+    def test_create_confirm_and_apply_to_lead(self):
+        customer = customer_fixture()
+        lead = lead_fixture(customer)
+        conversation = conversation_fixture(customer)
+        db = FakeDb(objects={(Lead, lead.id): lead, (Conversation, conversation.id): conversation, (Customer, customer.id): customer})
+        service = EnergyBillExtractorService(db, admin_user())
+
+        extraction = service.create_from_text(
+            SAMPLE_BILL_TEXT,
+            {"lead_id": lead.id, "conversation_id": conversation.id, "customer_id": customer.id},
+        )
+        confirmed = service.confirm_extraction(extraction.id)
+        applied = service.apply_to_lead(confirmed.id, lead.id)
+
+        self.assertEqual(confirmed.status, "confirmed")
+        self.assertEqual(float(applied.average_bill), 512.34)
+        self.assertEqual(applied.utility_company, "CPFL")
+        self.assertEqual(applied.extra["average_consumption_kwh"], 429)
+        self.assertTrue([item for item in db.added if isinstance(item, AuditLog)])
+
+    def test_generate_proposal_from_extraction_selects_kit_by_average_consumption(self):
+        customer = customer_fixture()
+        lead = lead_fixture(customer)
+        conversation = conversation_fixture(customer)
+        extraction = EnergyBillExtractorService(FakeDb()).parse_energy_bill_text(SAMPLE_BILL_TEXT)
+        extraction_model = EnergyBillExtraction(
+            id="extraction-1",
+            lead_id=lead.id,
+            conversation_id=conversation.id,
+            customer_id=customer.id,
+            status="confirmed",
+            source="text",
+            origin="manual_text",
+            distributor=extraction.distributor,
+            current_bill_amount=extraction.current_bill_amount,
+            average_bill_amount=extraction.average_bill_amount,
+            average_consumption_kwh=extraction.average_consumption_kwh,
+            estimated_system_power_kwp=extraction.estimated_system_power_kwp,
+            estimated_monthly_generation_kwh=extraction.estimated_monthly_generation_kwh,
+            confidence_score=extraction.confidence_score,
+            needs_human_review=False,
+            missing_fields=[],
+            parsed_fields={},
+            raw_extraction={},
+            created_at=utc_now(),
+        )
+        db = FakeDb(
+            objects={(Lead, lead.id): lead, (Conversation, conversation.id): conversation, (Customer, customer.id): customer},
+            scalar_queue=[extraction_model, extraction_model, None],
+            scalars_queue=[[], [kit_fixture()]],
+        )
+
+        proposal = EnergyBillExtractorService(db, admin_user()).generate_proposal(extraction_model.id)
+
+        self.assertIsInstance(proposal, Proposal)
+        self.assertEqual(proposal.recommended_kit_name, "Kit 3,30 kWp")
+        self.assertEqual(float(proposal.estimated_monthly_generation_kwh), 460)
+        self.assertIn("Consumo medio", proposal.internal_notes)
+
+
+class EnergyBillRoutesTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.client = TestClient(app)
+        self.user = admin_user()
+        self.db = FakeDb()
+        app.dependency_overrides[get_db] = lambda: self.db
+        app.dependency_overrides[get_current_user] = lambda: self.user
+
+    def tearDown(self) -> None:
+        app.dependency_overrides.clear()
+
+    def test_parse_text_endpoint(self):
+        response = self.client.post("/energy-bills/parse-text", json={"raw_text": SAMPLE_BILL_TEXT, "metadata": {}})
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["distributor"], "CPFL")
+        self.assertEqual(payload["current_consumption_kwh"], 450)
+        self.assertNotIn("123.456.789-01", str(payload))
+
+    def test_list_endpoint_returns_origin(self):
+        extraction = EnergyBillExtraction(
+            id="extraction-1",
+            status="processing",
+            source="site",
+            origin="chatbot",
+            confidence_score=0,
+            needs_human_review=True,
+            missing_fields=[],
+            parsed_fields={},
+            raw_extraction={},
+            created_at=utc_now(),
+        )
+        self.db.scalars_queue = [[extraction]]
+
+        response = self.client.get("/energy-bills")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload[0]["origin"], "chatbot")
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -8,14 +8,15 @@ A area `Propostas` transforma leads captados pelo Solis em rascunhos comerciais 
 2. O Solis cria um lead de orcamento.
 3. No painel, a equipe clica em `Gerar proposta` na tela de Leads.
 4. O backend cria uma proposta com status `draft`.
-5. Se houver tabela de precos ativa, os itens configurados sao carregados.
-6. Se nao houver tabela, os itens padrao entram com valores zerados.
-7. A equipe revisa dados tecnicos, itens, valores, desconto, validade e condicoes.
-8. A equipe gera o PDF premium.
-9. A equipe escolhe o canal de envio: manual, WhatsApp, e-mail ou link seguro.
-10. O sistema gera um token seguro para a pagina `/proposta/{token}`.
-11. O cliente visualiza, baixa o PDF e registra interesse, aceite, recusa, pedido de ajuste ou pedido de consultor.
-12. A equipe acompanha a linha do tempo e os follow-ups comerciais no painel.
+5. Se houver leitura confirmada da conta de energia, o consumo medio extraido alimenta kWh/kWp e selecao de kit.
+6. Se houver tabela de precos ativa, os itens configurados sao carregados.
+7. Se nao houver tabela, os itens padrao entram com valores zerados.
+8. A equipe revisa dados tecnicos, itens, valores, desconto, validade e condicoes.
+9. A equipe gera o PDF premium.
+10. A equipe escolhe o canal de envio: manual, WhatsApp, e-mail ou link seguro.
+11. O sistema gera um token seguro para a pagina `/proposta/{token}`.
+12. O cliente visualiza, baixa o PDF e registra interesse, aceite, recusa, pedido de ajuste ou pedido de consultor.
+13. A equipe acompanha a linha do tempo e os follow-ups comerciais no painel.
 
 ## Endpoints
 
@@ -63,6 +64,10 @@ DELETE /proposal-kits/{kit_id}
 POST /proposal-kits/{kit_id}/items
 PUT /proposal-kits/{kit_id}/items/{item_id}
 DELETE /proposal-kits/{kit_id}/items/{item_id}
+
+GET /energy-bills
+POST /energy-bills/{extraction_id}/apply-to-lead/{lead_id}
+POST /energy-bills/{extraction_id}/generate-proposal
 ```
 
 Visualizacao e permitida para perfis internos. Criacao, edicao, PDF, envio, follow-ups, links seguros, configuracoes comerciais e gestao da tabela de precos sao restritos a `admin`, `comercial` e `gestor`. Kits podem ser visualizados por `admin`, `comercial`, `gestor`, `suporte` e `tecnico`; gestao de kits fica restrita a `admin`, `comercial` e `gestor`. As rotas `/public/proposals/{token}` sao publicas, mas exigem token valido, nao revogado e nao expirado.
@@ -145,6 +150,8 @@ Exemplo com R$ 350,00 de conta media:
 - se houver kit ativo compativel, ele sera exibido como recomendado.
 
 A proposta continua `draft`. O kit e uma recomendacao, nao um dimensionamento definitivo. Revise telhado, sombreamento, padrao de entrada, concessionaria, estrutura, valores e condicoes antes de enviar.
+
+Quando houver `average_consumption_kwh` vindo do Leitor Inteligente de Conta de Energia, esse consumo medio tem prioridade sobre a estimativa por valor em reais. Isso melhora a escolha de kit, mas continua exigindo revisao humana.
 
 Guia completo: [`proposal-kits.md`](proposal-kits.md).
 

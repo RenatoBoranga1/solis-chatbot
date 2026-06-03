@@ -130,6 +130,8 @@ Para `image`, `document` e `audio`, o parser preenche:
 
 O `ConversationService` mantem `attachment_url` em `messages` por compatibilidade e cria tambem um registro do modelo `Attachment` em `attachments` com `provider`, `provider_media_id`, `file_type`, `file_url`, `message_id` e `conversation_id`.
 
+Quando o anexo parecer uma conta de energia enviada em contexto de orcamento e houver consentimento LGPD no atendimento, o `ConversationService` pode criar uma `EnergyBillExtraction` com `origin=whatsapp`, `attachment_id` e `status=processing`. Como a Cloud API entrega primeiro apenas o `media_id`, enquanto o download privado da midia nao estiver habilitado o arquivo fica referenciado como `whatsapp://media/<media_id>` e a leitura automatica deve ficar pendente/falha operacional para revisao. A rota `POST /energy-bills/extract-from-attachment/{attachment_id}` continua disponivel para reprocessar o anexo depois que a midia for baixada para storage privado.
+
 ## 8.1. Links de vídeos e materiais da base
 
 Quando a base de conhecimento tiver vídeo ou material de apoio com envio automático ativado, o WhatsApp recebe o link em texto simples, sem HTML ou Markdown complexo:

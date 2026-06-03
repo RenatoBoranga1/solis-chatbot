@@ -129,7 +129,14 @@ class ProposalService:
         collected.update(lead.extra or {})
         city, state = self._city_state(customer, collected)
         average_bill = self._float_or_none(lead.average_bill or collected.get("average_bill"))
-        power_kwp, generation_kwh = self._estimate_system(average_bill)
+        average_consumption_kwh = self._float_or_none(
+            collected.get("average_consumption_kwh") or collected.get("current_consumption_kwh")
+        )
+        if average_consumption_kwh:
+            generation_kwh = round(average_consumption_kwh, 2)
+            power_kwp = round(generation_kwh / 135, 3)
+        else:
+            power_kwp, generation_kwh = self._estimate_system(average_bill)
         missing = self._missing_lead_data(lead, customer, collected)
         active_price_items = self._active_price_items()
         kit_selection = ProposalKitService(self.db).simulate_selection(
@@ -150,11 +157,13 @@ class ProposalService:
             internal_notes += f" Dados faltantes: {', '.join(missing)}."
         if selected_kit:
             internal_notes += (
-                " Kit recomendado automaticamente com base na conta media/consumo informado. "
+                " Kit recomendado automaticamente com base na conta media, consumo informado ou leitura da conta de energia. "
                 "Revise dimensionamento, telhado, concessionaria, padrao de entrada, sombreamento, estrutura e condicoes comerciais antes de enviar."
             )
             if kit_selection.selection_reason:
                 internal_notes += f" Motivo da selecao: {kit_selection.selection_reason}"
+        if average_consumption_kwh:
+            internal_notes += f" Consumo medio usado no pre-dimensionamento: {average_consumption_kwh:.0f} kWh/mes."
         elif active_price_items:
             internal_notes += " Valores carregados da tabela de precos configuravel. Revise antes de enviar."
         else:

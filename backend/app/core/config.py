@@ -36,8 +36,18 @@ class Settings(BaseSettings):
 
     attachment_storage: str = "local"
     attachment_base_url: AnyHttpUrl | str = "http://localhost:8000/uploads"
+    chat_attachment_storage_path: str = "storage/chat_attachments"
     proposal_storage_path: str = "storage/proposals"
     proposal_public_base_url: AnyHttpUrl | str | None = None
+
+    energy_bill_extraction_enabled: bool = True
+    energy_bill_ocr_enabled: bool = False
+    energy_bill_ocr_provider: str = "disabled"
+    energy_bill_allow_external_ai: bool = False
+    energy_bill_max_file_size_mb: int = 10
+    energy_bill_store_raw_text: bool = False
+    energy_bill_min_confidence_auto_apply: float = 0.85
+    energy_bill_storage_path: str = "storage/energy_bills"
 
     company_name: str = "Solar Solucoes"
     company_phone: str | None = None

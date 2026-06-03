@@ -1,0 +1,207 @@
+# Leitor Inteligente de Conta de Energia
+
+Este modulo transforma contas de energia em dados estruturados para orcamento fotovoltaico, revisao comercial e geracao de proposta em rascunho.
+
+## Objetivo
+
+Reduzir digitacao manual e melhorar a precisao do pre-dimensionamento. O sistema extrai dados, calcula medias e sugere estimativas, mas nao substitui analise tecnica, validacao comercial ou vistoria.
+
+## Fluxo
+
+1. Cliente envia conta pelo widget, WhatsApp ou equipe faz upload no painel.
+2. O anexo fica registrado em `attachments`.
+3. Se o atendimento estiver em contexto de orcamento e houver consentimento LGPD, o `ConversationService` cria automaticamente uma extracao em `energy_bill_extractions`.
+4. A extracao recebe uma origem: `chatbot`, `whatsapp`, `panel`, `manual_text` ou `api`.
+5. Para arquivos locais do widget/painel, o processamento e agendado em background e o chat continua rapido.
+6. O parser tenta extrair texto, consumo, valor, distribuidora e historico.
+7. O sistema calcula media de consumo, potencia estimada e economia estimada.
+8. Se a confianca for baixa, o status fica `needs_review`.
+9. Um humano revisa e confirma.
+10. A extracao confirmada pode ser aplicada ao lead.
+11. A proposta gerada usa consumo medio extraido para escolher o kit fotovoltaico.
+
+## Tabelas
+
+`energy_bill_extractions` guarda:
+
+- vinculos com conversa, cliente, lead e anexo;
+- status da leitura;
+- `source`, que indica o provedor tecnico do anexo;
+- `origin`, que indica a entrada de negocio (`chatbot`, `whatsapp`, `panel`, `manual_text` ou `api`);
+- distribuidora, unidade consumidora, cidade/UF, referencia e vencimento;
+- consumo atual, valor atual, medias e estimativas;
+- score de confianca;
+- campos faltantes;
+- `raw_text_excerpt` mascarado;
+- auditoria de confirmacao.
+
+`energy_bill_consumption_history` guarda o historico mensal extraido:
+
+- periodo;
+- consumo em kWh;
+- valor, quando disponivel.
+
+## Status
+
+- `pending`: criado, ainda sem processamento.
+- `processing`: criado automaticamente a partir de anexo e aguardando leitura em background.
+- `extracted`: leitura com confianca suficiente.
+- `needs_review`: leitura util, mas exige revisao humana.
+- `confirmed`: revisado e aprovado por usuario interno.
+- `failed`: nao foi possivel extrair texto ou dados minimos.
+- `discarded`: descartado pela equipe.
+
+## Configuracao
+
+```env
+ENERGY_BILL_EXTRACTION_ENABLED=true
+ENERGY_BILL_OCR_ENABLED=false
+ENERGY_BILL_OCR_PROVIDER=disabled
+ENERGY_BILL_ALLOW_EXTERNAL_AI=false
+ENERGY_BILL_MAX_FILE_SIZE_MB=10
+ENERGY_BILL_STORE_RAW_TEXT=false
+ENERGY_BILL_MIN_CONFIDENCE_AUTO_APPLY=0.85
+ENERGY_BILL_STORAGE_PATH=storage/energy_bills
+CHAT_ATTACHMENT_STORAGE_PATH=storage/chat_attachments
+```
+
+Recomendacao inicial: manter OCR e IA externa desligados ate homologar o fluxo com contas reais e politica LGPD revisada.
+
+## Endpoints
+
+```text
+GET /energy-bills
+GET /energy-bills/{extraction_id}
+POST /energy-bills/extract
+POST /energy-bills/extract-from-attachment/{attachment_id}
+PUT /energy-bills/{extraction_id}
+POST /energy-bills/{extraction_id}/confirm
+POST /energy-bills/{extraction_id}/apply-to-lead/{lead_id}
+POST /energy-bills/{extraction_id}/generate-proposal
+POST /energy-bills/{extraction_id}/discard
+POST /energy-bills/parse-text
+POST /chat/attachments
+```
+
+Visualizacao: `admin`, `comercial`, `gestor`, `suporte`, `tecnico`.
+
+Gestao, confirmacao, aplicacao em lead e proposta: `admin`, `comercial`, `gestor`.
+
+## Automacao por chatbot
+
+Quando o cliente envia PDF ou imagem no widget durante o fluxo de orcamento, o frontend primeiro envia o arquivo para `POST /chat/attachments`. A rota valida extensao e tamanho, salva em `CHAT_ATTACHMENT_STORAGE_PATH` e devolve `attachment_url` e `media_type`.
+
+Em seguida, `POST /chat/message` recebe a mensagem do cliente com o anexo salvo. O `ConversationService`:
+
+- registra `Message` e `Attachment`;
+- verifica se ha contexto comercial e consentimento LGPD;
+- detecta pistas como "conta de energia", "conta de luz", "fatura", "kWh" ou distribuidoras;
+- cria `EnergyBillExtraction` com `origin=chatbot` e `status=processing`;
+- agenda o processamento em background;
+- atualiza `conversation.collected_data` com `bill_file_received`, `energy_bill_extraction_id`, `energy_bill_status` e origem.
+
+Se a leitura terminar com sucesso, `conversation.collected_data` e o lead vinculado recebem consumo, valor, distribuidora, cidade/UF, unidade consumidora, confianca e necessidade de revisao. Se o arquivo for invalido, nao relacionado ou sem consentimento LGPD, a extracao nao e criada automaticamente.
+
+## WhatsApp
+
+Mensagens WhatsApp com `image`, `document` ou `audio` ja geram `Attachment` com `provider_media_id`. Quando o anexo parecer conta de energia em um fluxo comercial, a extracao pode ser criada com `origin=whatsapp`.
+
+Enquanto o download real da midia da Meta nao estiver habilitado, arquivos WhatsApp ficam referenciados como `whatsapp://media/<media_id>` e a leitura automatica e marcada para revisao/falha operacional. O proximo passo de producao e baixar a midia para storage privado antes de processar.
+
+## Parsers
+
+A primeira versao inclui:
+
+- parser generico para textos de contas brasileiras;
+- parser CPFL basico.
+
+O parser busca:
+
+- kWh atual;
+- valor total;
+- historico mensal;
+- distribuidora;
+- unidade consumidora;
+- cidade/UF;
+- referencia e vencimento;
+- CPF/CNPJ mascarado.
+
+Novos parsers podem ser adicionados em `backend/app/services/energy_bill_parsers/`.
+
+## LGPD e seguranca
+
+- Nao logar texto bruto completo da conta.
+- Nao expor CPF/CNPJ completo.
+- `raw_text_excerpt` e mascarado.
+- `ENERGY_BILL_STORE_RAW_TEXT=false` por padrao.
+- Validar tipo e tamanho de arquivo.
+- Rejeitar extensoes executaveis.
+- Revisar permissoes do painel.
+- Usar storage privado em producao.
+- Ativar IA/OCR externo somente com base legal, contrato e politica de privacidade revisados.
+
+## Propostas e kits
+
+Ao aplicar a extracao ao lead, o sistema grava em `lead.extra`:
+
+- `energy_bill_extraction_id`;
+- `bill_file_received`;
+- `bill_extraction_origin`;
+- `bill_extraction_confidence_score`;
+- `bill_needs_human_review`;
+- `average_consumption_kwh`;
+- `current_consumption_kwh`;
+- `average_bill_amount`;
+- `current_bill_amount`;
+- `estimated_system_power_kwp`;
+- `estimated_monthly_generation_kwh`;
+- `utility_company`.
+
+Ao gerar proposta, o backend prefere `average_consumption_kwh` para estimar geracao e potencia. Isso melhora a selecao automatica de `proposal_kits`.
+
+A proposta continua `draft` e deve ser revisada antes de envio.
+
+## Como testar
+
+Backend:
+
+```bash
+cd backend
+python -m unittest discover tests
+python -m compileall app tests
+alembic upgrade head --sql
+```
+
+Painel:
+
+1. Acesse `http://localhost:5173`.
+2. Entre no painel admin.
+3. Abra `Contas`.
+4. Envie um `.txt` com dados de conta ou cole texto em `Testar texto extraido`.
+5. Confira consumo, valor, historico, confianca e campos faltantes.
+6. Confirme a leitura.
+7. Aplique em um lead.
+8. Gere proposta e revise o kit recomendado.
+
+Widget:
+
+1. Inicie um fluxo de orcamento.
+2. Confirme o consentimento LGPD.
+3. Envie uma conta em PDF ou imagem.
+4. Confirme que a conversa registra o anexo e que a tela `Contas` mostra `Origem: Chatbot`.
+5. Confirme que `collected_data` e lead sao atualizados apos o processamento.
+
+## Checklist de homologacao
+
+- [ ] Testar com contas reais das principais distribuidoras atendidas.
+- [ ] Validar CPFL e ao menos uma conta generica.
+- [ ] Confirmar mascaramento de CPF/CNPJ.
+- [ ] Confirmar que arquivos grandes sao rejeitados.
+- [ ] Confirmar que OCR desligado nao quebra o fluxo.
+- [ ] Revisar status `needs_review`.
+- [ ] Aplicar extracao em lead real de teste.
+- [ ] Gerar proposta e conferir kit recomendado.
+- [ ] Enviar conta pelo widget e confirmar `origin=chatbot`.
+- [ ] Enviar midia WhatsApp de teste e confirmar pendencia ate download privado.
+- [ ] Revisar LGPD e politica de retencao.
+- [ ] Definir storage privado para anexos em producao.

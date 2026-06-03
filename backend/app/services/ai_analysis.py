@@ -552,8 +552,10 @@ class AIAnalysisService:
             score += 10
         if lead.financing_interest or self._contains(text, FINANCING_TERMS):
             score += 15
-        if extra.get("has_energy_bill") or extra.get("attachments"):
+        if extra.get("has_energy_bill") or extra.get("attachments") or extra.get("energy_bill_extraction_id"):
             score += 15
+        if extra.get("average_consumption_kwh") or extra.get("current_consumption_kwh"):
+            score += 10
         if self._contains(text + " " + (lead.notes or ""), ["urgente", "quero instalar", "fechar", "proposta"]):
             score += 10
         return min(100, score)
@@ -604,7 +606,12 @@ class AIAnalysisService:
             missing.append("tipo de imóvel")
         if not (lead and lead.utility_company) and not collected.get("utility_company"):
             missing.append("distribuidora")
-        if not collected.get("has_energy_bill") and not collected.get("attachments"):
+        if not (
+            collected.get("has_energy_bill")
+            or collected.get("attachments")
+            or collected.get("energy_bill_extraction_id")
+            or collected.get("average_consumption_kwh")
+        ):
             missing.append("foto ou PDF da conta de luz")
         if not collected.get("best_contact_time"):
             missing.append("melhor horário de contato")

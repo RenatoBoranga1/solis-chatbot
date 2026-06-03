@@ -30,6 +30,9 @@ import type {
   Conversation,
   DashboardAIInsights,
   DashboardMetrics,
+  EnergyBillExtraction,
+  EnergyBillHistory,
+  EnergyBillParsedData,
   KnowledgeArticle,
   Lead,
   Proposal,
@@ -52,6 +55,7 @@ type AdminData = {
   proposalFollowups: ProposalFollowUp[];
   proposalPriceItems: ProposalPriceItem[];
   proposalKits: ProposalKit[];
+  energyBillExtractions: EnergyBillExtraction[];
   companySettings: CompanySettings | null;
   tickets: Ticket[];
   knowledge: KnowledgeArticle[];
@@ -66,6 +70,7 @@ const emptyData: AdminData = {
   proposalFollowups: [],
   proposalPriceItems: [],
   proposalKits: [],
+  energyBillExtractions: [],
   companySettings: null,
   tickets: [],
   knowledge: [],
@@ -84,6 +89,8 @@ export function AdminDashboard() {
   const [ticketAnalyses, setTicketAnalyses] = useState<Record<string, AIAnalysis>>({});
   const [selectedProposal, setSelectedProposal] = useState<Proposal | null>(null);
   const [proposalLoadingKey, setProposalLoadingKey] = useState<string | null>(null);
+  const [energyBillLoadingKey, setEnergyBillLoadingKey] = useState<string | null>(null);
+  const [energyBillPreview, setEnergyBillPreview] = useState<EnergyBillParsedData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [articleDraft, setArticleDraft] = useState({
     title: "",
@@ -120,6 +127,7 @@ export function AdminDashboard() {
           proposalFollowups,
           proposalPriceItems,
           proposalKits,
+          energyBillExtractions,
           companySettings,
           tickets,
           knowledge,
@@ -132,11 +140,12 @@ export function AdminDashboard() {
           adminApi.proposalFollowups(currentToken),
           adminApi.proposalPriceItems(currentToken),
           adminApi.proposalKits(currentToken),
+          adminApi.energyBills(currentToken),
           adminApi.companySettings(currentToken),
           adminApi.tickets(currentToken),
           adminApi.knowledge(currentToken),
         ]);
-        setData({ metrics, aiInsights, conversations, leads, proposals, proposalFollowups, proposalPriceItems, proposalKits, companySettings, tickets, knowledge });
+        setData({ metrics, aiInsights, conversations, leads, proposals, proposalFollowups, proposalPriceItems, proposalKits, energyBillExtractions, companySettings, tickets, knowledge });
       } catch (loadError) {
         setError("NÃ£o foi possÃ­vel carregar o painel. Verifique o login e a API.");
       } finally {
@@ -500,6 +509,85 @@ export function AdminDashboard() {
     return adminApi.simulateProposalKit(token, payload);
   }
 
+  async function handleParseEnergyBillText(rawText: string) {
+    if (!token) return;
+    setEnergyBillLoadingKey("parse-text");
+    setError(null);
+    try {
+      setEnergyBillPreview(await adminApi.parseEnergyBillText(token, rawText));
+    } catch (parseError) {
+      setError("Nao foi possivel interpretar o texto da conta. Verifique o conteudo informado.");
+    } finally {
+      setEnergyBillLoadingKey(null);
+    }
+  }
+
+  async function handleUploadEnergyBill(file: File, leadId?: string) {
+    if (!token) return;
+    setEnergyBillLoadingKey("upload");
+    setError(null);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      if (leadId) formData.append("lead_id", leadId);
+      await adminApi.uploadEnergyBill(token, formData);
+      await loadData();
+    } catch (uploadError) {
+      setError("Nao foi possivel processar o arquivo da conta. Use PDF, imagem ou TXT dentro do limite configurado.");
+    } finally {
+      setEnergyBillLoadingKey(null);
+    }
+  }
+
+  async function handleUpdateEnergyBill(id: string, payload: Partial<EnergyBillExtraction>) {
+    if (!token) return;
+    await adminApi.updateEnergyBill(token, id, payload);
+    await loadData();
+  }
+
+  async function handleConfirmEnergyBill(id: string) {
+    if (!token) return;
+    setEnergyBillLoadingKey(`confirm:${id}`);
+    try {
+      await adminApi.confirmEnergyBill(token, id);
+      await loadData();
+    } finally {
+      setEnergyBillLoadingKey(null);
+    }
+  }
+
+  async function handleApplyEnergyBillToLead(id: string, leadId: string) {
+    if (!token || !leadId) return;
+    setEnergyBillLoadingKey(`apply:${id}`);
+    try {
+      await adminApi.applyEnergyBillToLead(token, id, leadId);
+      await loadData();
+    } finally {
+      setEnergyBillLoadingKey(null);
+    }
+  }
+
+  async function handleGenerateProposalFromEnergyBill(id: string) {
+    if (!token) return;
+    setEnergyBillLoadingKey(`proposal:${id}`);
+    try {
+      const proposal = await adminApi.generateProposalFromEnergyBill(token, id);
+      setSelectedProposal(proposal);
+      setActiveView("propostas");
+      await loadData();
+    } catch (proposalError) {
+      setError("A conta precisa estar ligada a um lead antes de gerar a proposta.");
+    } finally {
+      setEnergyBillLoadingKey(null);
+    }
+  }
+
+  async function handleDiscardEnergyBill(id: string) {
+    if (!token) return;
+    await adminApi.discardEnergyBill(token, id);
+    await loadData();
+  }
+
   function copySuggestedReply(text: string) {
     void navigator.clipboard?.writeText(text);
   }
@@ -551,6 +639,7 @@ export function AdminDashboard() {
           <NavButton id="dashboard" label="Dashboard" icon={<BarChart3 size={18} />} active={activeView} onClick={setActiveView} />
           <NavButton id="conversas" label="Atendimentos" icon={<Headphones size={18} />} active={activeView} onClick={setActiveView} />
           <NavButton id="leads" label="Leads" icon={<UsersRound size={18} />} active={activeView} onClick={setActiveView} />
+          <NavButton id="contas" label="Contas" icon={<FileText size={18} />} active={activeView} onClick={setActiveView} />
           <NavButton id="propostas" label="Propostas" icon={<FileText size={18} />} active={activeView} onClick={setActiveView} />
           <NavButton id="chamados" label="Chamados" icon={<TicketCheck size={18} />} active={activeView} onClick={setActiveView} />
           <NavButton id="base" label="Base" icon={<BookOpenText size={18} />} active={activeView} onClick={setActiveView} />
@@ -602,6 +691,21 @@ export function AdminDashboard() {
             onCopy={copySuggestedReply}
             onCreateProposal={handleCreateProposalFromLead}
             proposalLoadingKey={proposalLoadingKey}
+          />
+        )}
+        {activeView === "contas" && (
+          <EnergyBillsView
+            extractions={data.energyBillExtractions}
+            leads={data.leads}
+            preview={energyBillPreview}
+            loadingKey={energyBillLoadingKey}
+            onParseText={handleParseEnergyBillText}
+            onUpload={handleUploadEnergyBill}
+            onUpdate={handleUpdateEnergyBill}
+            onConfirm={handleConfirmEnergyBill}
+            onApplyToLead={handleApplyEnergyBillToLead}
+            onGenerateProposal={handleGenerateProposalFromEnergyBill}
+            onDiscard={handleDiscardEnergyBill}
           />
         )}
         {activeView === "propostas" && (
@@ -687,6 +791,7 @@ function titleFor(view: string) {
     dashboard: "Dashboard",
     conversas: "Atendimentos",
     leads: "Leads de orÃ§amento",
+    contas: "Contas de energia",
     propostas: "Propostas",
     chamados: "Chamados tÃ©cnicos",
     base: "Base de conhecimento",
@@ -699,6 +804,7 @@ function subtitleFor(view: string) {
     dashboard: "Indicadores de atendimento, vendas e suporte.",
     conversas: "HistÃ³rico das conversas e transferÃªncias.",
     leads: "SolicitaÃ§Ãµes comerciais captadas pelo Solis.",
+    contas: "Leitura inteligente, revisao humana e dados para propostas.",
     propostas: "CriaÃ§Ã£o, revisÃ£o, PDF e envio de propostas comerciais.",
     chamados: "Triagem tÃ©cnica com gravidade e status.",
     base: "Perguntas e respostas oficiais para IA e atendimento.",
@@ -1165,6 +1271,241 @@ function LeadsView({
         </div>
       ))}
     </section>
+  );
+}
+
+function EnergyBillsView({
+  extractions,
+  leads,
+  preview,
+  loadingKey,
+  onParseText,
+  onUpload,
+  onUpdate,
+  onConfirm,
+  onApplyToLead,
+  onGenerateProposal,
+  onDiscard,
+}: {
+  extractions: EnergyBillExtraction[];
+  leads: Lead[];
+  preview: EnergyBillParsedData | null;
+  loadingKey: string | null;
+  onParseText: (rawText: string) => Promise<void>;
+  onUpload: (file: File, leadId?: string) => Promise<void>;
+  onUpdate: (id: string, payload: Partial<EnergyBillExtraction>) => Promise<void>;
+  onConfirm: (id: string) => Promise<void>;
+  onApplyToLead: (id: string, leadId: string) => Promise<void>;
+  onGenerateProposal: (id: string) => Promise<void>;
+  onDiscard: (id: string) => Promise<void>;
+}) {
+  const [rawText, setRawText] = useState("");
+  const [uploadLeadId, setUploadLeadId] = useState("");
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [leadTargets, setLeadTargets] = useState<Record<string, string>>({});
+
+  async function submitParse(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!rawText.trim()) return;
+    await onParseText(rawText);
+  }
+
+  async function submitUpload(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedFile) return;
+    await onUpload(selectedFile, uploadLeadId || undefined);
+    setSelectedFile(null);
+  }
+
+  return (
+    <section className="energy-bills-layout">
+      <div className="energy-bill-tools">
+        <form className="energy-bill-card" onSubmit={submitUpload}>
+          <div className="section-heading">
+            <div>
+              <strong>Enviar conta de energia</strong>
+              <span>PDF, imagem ou texto para leitura estruturada.</span>
+            </div>
+          </div>
+          <input type="file" accept=".pdf,.txt,image/*" onChange={(event) => setSelectedFile(event.target.files?.[0] ?? null)} />
+          <select value={uploadLeadId} onChange={(event) => setUploadLeadId(event.target.value)}>
+            <option value="">Vincular lead depois</option>
+            {leads.map((lead) => (
+              <option value={lead.id} key={lead.id}>
+                {lead.property_type ?? "Lead"} - {formatCurrency(lead.average_bill)}
+              </option>
+            ))}
+          </select>
+          <button className="primary-button" type="submit" disabled={!selectedFile || loadingKey === "upload"}>
+            <FileText size={16} />
+            {loadingKey === "upload" ? "Processando" : "Processar conta"}
+          </button>
+        </form>
+
+        <form className="energy-bill-card" onSubmit={submitParse}>
+          <div className="section-heading">
+            <div>
+              <strong>Testar texto extraido</strong>
+              <span>Use para validar parser antes de revisar no painel.</span>
+            </div>
+          </div>
+          <textarea
+            value={rawText}
+            onChange={(event) => setRawText(event.target.value)}
+            placeholder="Cole aqui o texto da conta de energia para simular a leitura."
+          />
+          <button className="secondary-button" type="submit" disabled={!rawText.trim() || loadingKey === "parse-text"}>
+            <Sparkles size={16} />
+            Interpretar texto
+          </button>
+        </form>
+      </div>
+
+      {preview && (
+        <article className="energy-bill-preview">
+          <strong>Previa da leitura</strong>
+          <div className="kit-summary-grid">
+            <span><small>Distribuidora</small><strong>{preview.distributor ?? "A revisar"}</strong></span>
+            <span><small>Consumo medio</small><strong>{formatMeasurement(preview.average_consumption_kwh, "kWh/mes", 0)}</strong></span>
+            <span><small>Conta atual</small><strong>{formatCurrency(preview.current_bill_amount)}</strong></span>
+            <span><small>Potencia estimada</small><strong>{formatMeasurement(preview.estimated_system_power_kwp, "kWp", 3)}</strong></span>
+            <span><small>Confianca</small><strong>{Math.round((preview.confidence_score ?? 0) * 100)}%</strong></span>
+            <span><small>Revisao humana</small><strong>{preview.needs_human_review ? "Sim" : "Nao"}</strong></span>
+          </div>
+          {preview.missing_fields.length > 0 && <p>Dados faltantes: {preview.missing_fields.join(", ")}</p>}
+          <EnergyBillHistoryChart history={preview.history} />
+        </article>
+      )}
+
+      <section className="table-panel">
+        <TableHeader columns={["Status", "Origem", "Distribuidora", "Consumo", "Conta", "Confianca", "Lead", "Criada em", "Acao"]} />
+        {extractions.map((extraction) => {
+          const targetLeadId = leadTargets[extraction.id] ?? extraction.lead_id ?? "";
+          return (
+            <div className="table-group" key={extraction.id}>
+              <div className="table-row table-row--nine">
+                <EnergyBillStatusPill status={extraction.status} />
+                <OriginBadge origin={extraction.origin} />
+                <span>{extraction.distributor ?? "A revisar"}</span>
+                <span>{formatMeasurement(extraction.average_consumption_kwh ?? extraction.current_consumption_kwh, "kWh", 0)}</span>
+                <span>{formatCurrency(extraction.average_bill_amount ?? extraction.current_bill_amount)}</span>
+                <span>{Math.round(Number(extraction.confidence_score ?? 0) * 100)}%</span>
+                <select value={targetLeadId} onChange={(event) => setLeadTargets((current) => ({ ...current, [extraction.id]: event.target.value }))}>
+                  <option value="">Selecionar lead</option>
+                  {leads.map((lead) => (
+                    <option value={lead.id} key={lead.id}>
+                      {lead.property_type ?? "Lead"} - {formatCurrency(lead.average_bill)}
+                    </option>
+                  ))}
+                </select>
+                <span>{formatDateTime(extraction.created_at)}</span>
+                <div className="row-actions">
+                  <button className="text-button" onClick={() => onConfirm(extraction.id)} disabled={loadingKey === `confirm:${extraction.id}` || extraction.status === "confirmed"}>
+                    <CheckCircle2 size={15} />
+                    Confirmar
+                  </button>
+                  <button className="text-button" onClick={() => onApplyToLead(extraction.id, targetLeadId)} disabled={!targetLeadId || loadingKey === `apply:${extraction.id}`}>
+                    Aplicar
+                  </button>
+                  <button className="text-button text-button--proposal" onClick={() => onGenerateProposal(extraction.id)} disabled={loadingKey === `proposal:${extraction.id}`}>
+                    <FileText size={15} />
+                    Proposta
+                  </button>
+                  <button className="text-button text-button--danger" onClick={() => onDiscard(extraction.id)} disabled={extraction.status === "discarded"}>
+                    Descartar
+                  </button>
+                </div>
+              </div>
+              <div className="energy-bill-detail">
+                <div className="proposal-grid">
+                  <label>
+                    Cliente na conta
+                    <input defaultValue={extraction.customer_name ?? ""} onBlur={(event) => onUpdate(extraction.id, { customer_name: event.target.value || null })} />
+                  </label>
+                  <label>
+                    Unidade/instalacao
+                    <input defaultValue={extraction.installation_number ?? ""} onBlur={(event) => onUpdate(extraction.id, { installation_number: event.target.value || null })} />
+                  </label>
+                  <label>
+                    Cidade
+                    <input defaultValue={extraction.city ?? ""} onBlur={(event) => onUpdate(extraction.id, { city: event.target.value || null })} />
+                  </label>
+                  <label>
+                    UF
+                    <input maxLength={2} defaultValue={extraction.state ?? ""} onBlur={(event) => onUpdate(extraction.id, { state: event.target.value || null })} />
+                  </label>
+                  <label>
+                    Consumo atual kWh
+                    <input type="number" defaultValue={extraction.current_consumption_kwh ?? ""} onBlur={(event) => onUpdate(extraction.id, { current_consumption_kwh: numberOrNull(event.target.value) })} />
+                  </label>
+                  <label>
+                    Valor atual
+                    <input type="number" defaultValue={extraction.current_bill_amount ?? ""} onBlur={(event) => onUpdate(extraction.id, { current_bill_amount: numberOrNull(event.target.value) })} />
+                  </label>
+                  <label>
+                    Consumo medio kWh
+                    <input type="number" defaultValue={extraction.average_consumption_kwh ?? ""} onBlur={(event) => onUpdate(extraction.id, { average_consumption_kwh: numberOrNull(event.target.value) })} />
+                  </label>
+                  <label>
+                    Conta media
+                    <input type="number" defaultValue={extraction.average_bill_amount ?? ""} onBlur={(event) => onUpdate(extraction.id, { average_bill_amount: numberOrNull(event.target.value) })} />
+                  </label>
+                </div>
+                <div className="kit-summary-grid">
+                  <span><small>Potencia estimada</small><strong>{formatMeasurement(extraction.estimated_system_power_kwp, "kWp", 3)}</strong></span>
+                  <span><small>Geracao estimada</small><strong>{formatMeasurement(extraction.estimated_monthly_generation_kwh, "kWh/mes", 0)}</strong></span>
+                  <span><small>Economia estimada</small><strong>{formatCurrency(extraction.estimated_monthly_savings)}</strong></span>
+                  <span><small>Documento</small><strong>{extraction.customer_document_masked ?? "Nao exibido"}</strong></span>
+                  <span><small>Origem</small><strong>{originLabel(extraction.origin)}</strong></span>
+                  <span><small>Conversa</small><strong>{extraction.conversation_id ?? "Sem vinculo"}</strong></span>
+                </div>
+                {extraction.missing_fields.length > 0 && <p className="proposal-alert proposal-alert--warning">Revisar dados faltantes: {extraction.missing_fields.join(", ")}</p>}
+                {extraction.error_message && <p className="proposal-alert proposal-alert--warning">{extraction.error_message}</p>}
+                <EnergyBillHistoryChart history={extraction.history} />
+              </div>
+            </div>
+          );
+        })}
+        {!extractions.length && <p className="empty-state">Nenhuma conta de energia processada ainda.</p>}
+      </section>
+    </section>
+  );
+}
+
+function EnergyBillStatusPill({ status }: { status: string }) {
+  return <span className={`status-badge status-badge--${status}`}>{status}</span>;
+}
+
+function OriginBadge({ origin }: { origin: string }) {
+  return <span className={`origin-badge origin-badge--${origin}`}>{originLabel(origin)}</span>;
+}
+
+function originLabel(origin: string) {
+  const labels: Record<string, string> = {
+    chatbot: "Chatbot",
+    whatsapp: "WhatsApp",
+    panel: "Painel",
+    manual_text: "Texto manual",
+    api: "API",
+  };
+  return labels[origin] ?? origin;
+}
+
+function EnergyBillHistoryChart({ history }: { history: EnergyBillHistory[] }) {
+  if (!history?.length) return <p className="empty-state">Historico de consumo ainda nao identificado.</p>;
+  const max = Math.max(...history.map((item) => Number(item.consumption_kwh || 0)), 1);
+  return (
+    <div className="energy-bill-history">
+      {history.slice(0, 12).map((item) => (
+        <div className="energy-bill-history__row" key={`${item.period}-${item.consumption_kwh}`}>
+          <span>{item.period}</span>
+          <div>
+            <i style={{ width: `${Math.max(8, Math.round((Number(item.consumption_kwh || 0) / max) * 100))}%` }} />
+          </div>
+          <strong>{formatMeasurement(item.consumption_kwh, "kWh", 0)}</strong>
+        </div>
+      ))}
+    </div>
   );
 }
 

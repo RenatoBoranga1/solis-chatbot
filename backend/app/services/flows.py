@@ -20,7 +20,7 @@ BUDGET_FLOW: list[FlowQuestion] = [
     ),
     FlowQuestion("average_bill", "Qual é o valor médio mensal da sua conta de energia?", None),
     FlowQuestion("utility_company", "Qual é a distribuidora de energia que atende o imóvel?", None),
-    FlowQuestion("has_energy_bill", "Você possui a conta de luz em PDF ou foto para enviar depois?", None),
+    FlowQuestion("has_energy_bill", "Você possui a conta de luz em PDF ou foto? Se tiver, pode enviar por aqui para deixarmos a análise mais precisa.", None),
     FlowQuestion("ownership", "O imóvel é próprio ou alugado?", None),
     FlowQuestion("roof_type", "O telhado é de cerâmica, fibrocimento, metálico, laje ou a instalação seria em solo?", None),
     FlowQuestion("financing_interest", "Você tem interesse em financiamento?", None),

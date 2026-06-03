@@ -9,6 +9,15 @@ Channel = Literal["site", "whatsapp", "instagram", "facebook", "admin"]
 SenderType = Literal["customer", "bot", "human"]
 Severity = Literal["baixa", "media", "alta"]
 AnalysisType = Literal["conversation", "lead", "ticket", "daily_dashboard"]
+EnergyBillExtractionStatus = Literal[
+    "pending",
+    "processing",
+    "extracted",
+    "needs_review",
+    "confirmed",
+    "failed",
+    "discarded",
+]
 ProposalStatus = Literal[
     "draft",
     "under_review",
@@ -98,6 +107,12 @@ class ChatMessageOut(BaseModel):
     next_question_key: str | None = None
     quick_replies: list[QuickReply] = Field(default_factory=list)
     summary: str | None = None
+
+
+class ChatAttachmentOut(BaseModel):
+    attachment_url: str
+    file_name: str
+    media_type: str
 
 
 class MessageOut(BaseModel):
@@ -204,6 +219,137 @@ class LeadUpdate(BaseModel):
     status: str | None = None
     notes: str | None = None
     extra: dict[str, Any] | None = None
+
+
+class EnergyBillHistoryIn(BaseModel):
+    period: str = Field(max_length=20)
+    consumption_kwh: float
+    bill_amount: float | None = None
+
+
+class EnergyBillHistoryOut(EnergyBillHistoryIn):
+    id: str
+    extraction_id: str
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class EnergyBillParsedData(BaseModel):
+    distributor: str | None = None
+    customer_name: str | None = None
+    customer_document_masked: str | None = None
+    installation_number: str | None = None
+    city: str | None = None
+    state: str | None = None
+    reference_month: str | None = None
+    due_date: str | None = None
+    current_consumption_kwh: float | None = None
+    current_bill_amount: float | None = None
+    average_consumption_kwh: float | None = None
+    average_bill_amount: float | None = None
+    min_consumption_kwh: float | None = None
+    max_consumption_kwh: float | None = None
+    estimated_system_power_kwp: float | None = None
+    estimated_monthly_generation_kwh: float | None = None
+    estimated_monthly_savings: float | None = None
+    confidence_score: float = 0
+    needs_human_review: bool = True
+    missing_fields: list[str] = Field(default_factory=list)
+    parsed_fields: dict[str, Any] = Field(default_factory=dict)
+    history: list[EnergyBillHistoryIn] = Field(default_factory=list)
+
+
+class EnergyBillParseTextIn(BaseModel):
+    raw_text: str = Field(min_length=1, max_length=60000)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class EnergyBillExtractionUpdate(BaseModel):
+    status: EnergyBillExtractionStatus | None = None
+    origin: str | None = Field(default=None, max_length=40)
+    distributor: str | None = None
+    customer_name: str | None = None
+    customer_document_masked: str | None = None
+    installation_number: str | None = None
+    city: str | None = None
+    state: str | None = Field(default=None, max_length=2)
+    reference_month: str | None = None
+    due_date: str | None = None
+    current_consumption_kwh: float | None = None
+    current_bill_amount: float | None = None
+    average_consumption_kwh: float | None = None
+    average_bill_amount: float | None = None
+    min_consumption_kwh: float | None = None
+    max_consumption_kwh: float | None = None
+    estimated_system_power_kwp: float | None = None
+    estimated_monthly_generation_kwh: float | None = None
+    estimated_monthly_savings: float | None = None
+    confidence_score: float | None = None
+    needs_human_review: bool | None = None
+    missing_fields: list[str] | None = None
+    parsed_fields: dict[str, Any] | None = None
+    history: list[EnergyBillHistoryIn] | None = None
+
+
+class EnergyBillExtractionConfirm(BaseModel):
+    distributor: str | None = None
+    customer_name: str | None = None
+    installation_number: str | None = None
+    city: str | None = None
+    state: str | None = Field(default=None, max_length=2)
+    reference_month: str | None = None
+    due_date: str | None = None
+    current_consumption_kwh: float | None = None
+    current_bill_amount: float | None = None
+    average_consumption_kwh: float | None = None
+    average_bill_amount: float | None = None
+    history: list[EnergyBillHistoryIn] | None = None
+
+
+class EnergyBillExtractionOut(BaseModel):
+    id: str
+    conversation_id: str | None
+    customer_id: str | None
+    lead_id: str | None
+    attachment_id: str | None
+    status: str
+    source: str
+    origin: str
+    file_name: str | None
+    file_type: str | None
+    file_url: str | None
+    distributor: str | None
+    customer_name: str | None
+    customer_document_masked: str | None
+    installation_number: str | None
+    city: str | None
+    state: str | None
+    reference_month: str | None
+    due_date: str | None
+    current_consumption_kwh: float | None
+    current_bill_amount: float | None
+    average_consumption_kwh: float | None
+    average_bill_amount: float | None
+    min_consumption_kwh: float | None
+    max_consumption_kwh: float | None
+    estimated_system_power_kwp: float | None
+    estimated_monthly_generation_kwh: float | None
+    estimated_monthly_savings: float | None
+    confidence_score: float
+    needs_human_review: bool
+    missing_fields: list[str]
+    parsed_fields: dict[str, Any]
+    raw_extraction: dict[str, Any]
+    raw_text_excerpt: str | None
+    error_message: str | None
+    confirmed_by: str | None
+    confirmed_at: datetime | None
+    created_at: datetime
+    updated_at: datetime | None
+    history: list[EnergyBillHistoryOut] = Field(default_factory=list)
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class StatusPatch(BaseModel):

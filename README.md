@@ -23,6 +23,7 @@ O projeto esta organizado como um monorepo simples:
 - Transferencia para humano em casos graves, complexos, comerciais estrategicos ou sem resposta confiavel.
 - Base de conhecimento administravel e pronta para RAG.
 - Kits fotovoltaicos configuraveis com simulador e selecao automatica para pre-propostas revisaveis.
+- Leitor Inteligente de Conta de Energia com extracao de consumo, valor, historico, confianca e revisao humana.
 - Base multimidia com videos oficiais, PDFs, manuais e links de apoio seguros.
 - Registro de perguntas sem resposta.
 - Painel com dashboard, conversas, leads, chamados e artigos.
@@ -160,6 +161,24 @@ Propostas:
 - `PUT /proposal-kits/{id}/items/{item_id}`
 - `DELETE /proposal-kits/{id}/items/{item_id}`
 
+Chat e anexos:
+
+- `POST /chat/message`
+- `POST /chat/attachments`
+
+Contas de energia:
+
+- `GET /energy-bills`
+- `GET /energy-bills/{extraction_id}`
+- `POST /energy-bills/extract`
+- `POST /energy-bills/extract-from-attachment/{attachment_id}`
+- `PUT /energy-bills/{extraction_id}`
+- `POST /energy-bills/{extraction_id}/confirm`
+- `POST /energy-bills/{extraction_id}/apply-to-lead/{lead_id}`
+- `POST /energy-bills/{extraction_id}/generate-proposal`
+- `POST /energy-bills/{extraction_id}/discard`
+- `POST /energy-bills/parse-text`
+
 Tickets:
 
 - `GET /tickets`
@@ -211,6 +230,42 @@ Inclua o script abaixo no site institucional:
 Durante o desenvolvimento, o arquivo fica em `widget/solis-widget.js`.
 
 O widget React e o script embutível mostram a mensagem do usuário imediatamente, exibem uma bolha temporária de processamento com três pontos animados, bloqueiam envio/atalhos enquanto aguardam resposta e mantêm o atraso humanizado apenas no frontend. O backend continua respondendo o mais rápido possível.
+
+## Leitor Inteligente de Conta de Energia
+
+A tela `Contas` do painel permite enviar PDF, imagem ou texto de conta de energia, interpretar dados comerciais e tecnicos e revisar tudo antes de aplicar ao lead.
+
+Quando o cliente envia PDF ou imagem pelo widget durante um fluxo de orcamento com consentimento LGPD, o backend registra `Attachment`, cria automaticamente uma `EnergyBillExtraction` com `origin=chatbot`, deixa o status como `processing` e agenda a leitura em background. O painel mostra a origem da conta, o vinculo com conversa/lead e os campos extraidos para revisao. Mensagens WhatsApp com midia tambem ficam preparadas para `origin=whatsapp`; enquanto o download privado da midia Meta nao estiver habilitado, o arquivo fica como `whatsapp://media/<media_id>` para revisao operacional.
+
+Dados extraidos:
+
+- distribuidora;
+- nome/documento mascarado;
+- numero da instalacao ou unidade consumidora;
+- cidade/UF;
+- referencia e vencimento;
+- consumo atual em kWh;
+- valor atual da conta;
+- historico mensal de consumo;
+- media, minimo e maximo de consumo;
+- potencia e geracao estimadas;
+- score de confianca e campos faltantes.
+
+Variaveis:
+
+```env
+ENERGY_BILL_EXTRACTION_ENABLED=true
+ENERGY_BILL_OCR_ENABLED=false
+ENERGY_BILL_OCR_PROVIDER=disabled
+ENERGY_BILL_ALLOW_EXTERNAL_AI=false
+ENERGY_BILL_MAX_FILE_SIZE_MB=10
+ENERGY_BILL_STORE_RAW_TEXT=false
+ENERGY_BILL_MIN_CONFIDENCE_AUTO_APPLY=0.85
+ENERGY_BILL_STORAGE_PATH=storage/energy_bills
+CHAT_ATTACHMENT_STORAGE_PATH=storage/chat_attachments
+```
+
+O OCR e IA externa ficam desligados por padrao. A extracao deterministica nao grava texto bruto completo, mascara CPF/CNPJ e gera status `needs_review` quando a confianca fica abaixo do limite. Guia completo: [`docs/energy-bill-extraction.md`](docs/energy-bill-extraction.md).
 
 ## WhatsApp Cloud API oficial
 

@@ -333,6 +333,7 @@ export type ContinueWhatsAppResponse = {
 export type Lead = {
   id: string;
   customer_id: string;
+  conversation_id: string | null;
   property_type: string | null;
   average_bill: number | null;
   utility_company: string | null;
@@ -340,7 +341,64 @@ export type Lead = {
   financing_interest: boolean | null;
   status: string;
   notes: string | null;
+  extra: Record<string, unknown>;
   created_at: string;
+  updated_at: string | null;
+};
+
+export type EnergyBillHistory = {
+  id?: string;
+  extraction_id?: string;
+  period: string;
+  consumption_kwh: number;
+  bill_amount: number | null;
+  created_at?: string;
+};
+
+export type EnergyBillParsedData = {
+  distributor: string | null;
+  customer_name: string | null;
+  customer_document_masked: string | null;
+  installation_number: string | null;
+  city: string | null;
+  state: string | null;
+  reference_month: string | null;
+  due_date: string | null;
+  current_consumption_kwh: number | null;
+  current_bill_amount: number | null;
+  average_consumption_kwh: number | null;
+  average_bill_amount: number | null;
+  min_consumption_kwh: number | null;
+  max_consumption_kwh: number | null;
+  estimated_system_power_kwp: number | null;
+  estimated_monthly_generation_kwh: number | null;
+  estimated_monthly_savings: number | null;
+  confidence_score: number;
+  needs_human_review: boolean;
+  missing_fields: string[];
+  parsed_fields: Record<string, unknown>;
+  history: EnergyBillHistory[];
+};
+
+export type EnergyBillExtraction = EnergyBillParsedData & {
+  id: string;
+  conversation_id: string | null;
+  customer_id: string | null;
+  lead_id: string | null;
+  attachment_id: string | null;
+  status: string;
+  source: string;
+  origin: string;
+  file_name: string | null;
+  file_type: string | null;
+  file_url: string | null;
+  raw_extraction: Record<string, unknown>;
+  raw_text_excerpt: string | null;
+  error_message: string | null;
+  confirmed_by: string | null;
+  confirmed_at: string | null;
+  created_at: string;
+  updated_at: string | null;
 };
 
 export type Ticket = {
