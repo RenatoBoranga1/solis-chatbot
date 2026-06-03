@@ -1381,6 +1381,7 @@ function EnergyBillsView({
         <TableHeader columns={["Status", "Origem", "Distribuidora", "Consumo", "Conta", "Confianca", "Lead", "Criada em", "Acao"]} />
         {extractions.map((extraction) => {
           const targetLeadId = leadTargets[extraction.id] ?? extraction.lead_id ?? "";
+          const ocr = energyBillOcrInfo(extraction);
           return (
             <div className="table-group" key={extraction.id}>
               <div className="table-row table-row--nine">
@@ -1458,7 +1459,12 @@ function EnergyBillsView({
                   <span><small>Documento</small><strong>{extraction.customer_document_masked ?? "Nao exibido"}</strong></span>
                   <span><small>Origem</small><strong>{originLabel(extraction.origin)}</strong></span>
                   <span><small>Conversa</small><strong>{extraction.conversation_id ?? "Sem vinculo"}</strong></span>
+                  <span><small>Metodo</small><strong>{ocr.method}</strong></span>
+                  <span><small>OCR</small><strong>{ocr.used}</strong></span>
+                  <span><small>Provider OCR</small><strong>{ocr.provider}</strong></span>
+                  <span><small>Paginas OCR</small><strong>{ocr.pages}</strong></span>
                 </div>
+                {ocr.notice && <p className={`proposal-alert proposal-alert--${ocr.noticeTone}`}>{ocr.notice}</p>}
                 {extraction.missing_fields.length > 0 && <p className="proposal-alert proposal-alert--warning">Revisar dados faltantes: {extraction.missing_fields.join(", ")}</p>}
                 {extraction.error_message && <p className="proposal-alert proposal-alert--warning">{extraction.error_message}</p>}
                 <EnergyBillHistoryChart history={extraction.history} />
@@ -1489,6 +1495,55 @@ function originLabel(origin: string) {
     api: "API",
   };
   return labels[origin] ?? origin;
+}
+
+function energyBillOcrInfo(extraction: EnergyBillExtraction) {
+  const fields = extraction.parsed_fields ?? {};
+  const method = String(fields.extraction_method ?? "Nao informado");
+  const provider = String(fields.ocr_provider ?? "disabled");
+  const ocrUsed = fields.ocr_used === true;
+  const ocrError = typeof fields.ocr_error === "string" ? fields.ocr_error : "";
+  const pageCount = typeof fields.ocr_page_count === "number" ? fields.ocr_page_count : Number(fields.ocr_page_count ?? 0);
+  let notice = "";
+  let noticeTone: "warning" | "success" = "warning";
+  if (ocrUsed && !ocrError) {
+    notice = "Texto extraido por OCR local. Revise os dados antes de aplicar ao lead.";
+    noticeTone = "success";
+  } else if (ocrError) {
+    notice =
+      ocrError.includes("OCR desabilitado") || provider === "disabled"
+        ? "O arquivo parece ser imagem ou PDF escaneado. Ative OCR local para leitura automatica ou revise manualmente."
+        : `OCR nao conseguiu concluir a leitura: ${ocrError}`;
+  }
+  return {
+    method: methodLabel(method),
+    used: ocrUsed ? "Sim" : "Nao",
+    provider: providerLabel(provider),
+    pages: pageCount > 0 ? String(pageCount) : "0",
+    notice,
+    noticeTone,
+  };
+}
+
+function methodLabel(method: string) {
+  const labels: Record<string, string> = {
+    pdf_text: "PDF textual",
+    text_file: "Texto",
+    ocr: "OCR",
+    pdf_text_insufficient: "PDF escaneado",
+    image_ocr_failed: "Imagem sem leitura",
+    unsupported: "Nao suportado",
+  };
+  return labels[method] ?? method;
+}
+
+function providerLabel(provider: string) {
+  const labels: Record<string, string> = {
+    disabled: "Desabilitado",
+    local_tesseract: "Tesseract local",
+    openai_vision: "OpenAI Vision",
+  };
+  return labels[provider] ?? provider;
 }
 
 function EnergyBillHistoryChart({ history }: { history: EnergyBillHistory[] }) {

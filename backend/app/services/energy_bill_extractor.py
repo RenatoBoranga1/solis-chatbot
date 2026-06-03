@@ -28,6 +28,7 @@ from app.services.energy_bill_parsers.base import (
     EnergyBillParseResult,
     sanitize_raw_excerpt,
 )
+from app.services.ocr import OcrResult, get_ocr_provider
 from app.services.proposals import ProposalService
 
 logger = logging.getLogger(__name__)
@@ -182,13 +183,17 @@ class EnergyBillExtractorService:
         path = Path(attachment.file_url)
         try:
             self._validate_file(path)
-            text = self._extract_text(path)
+            text, extraction_metadata = self._extract_text(path)
             if not text.strip():
-                self._mark_extraction_failed(extraction, "Nao foi possivel extrair texto do arquivo.")
+                self._mark_extraction_failed(
+                    extraction,
+                    self._empty_text_error_message(path, extraction_metadata),
+                    extraction_metadata,
+                )
                 self.db.commit()
                 self.db.refresh(extraction)
                 return self.get_extraction(extraction.id)
-            result = self.parse_energy_bill_text(text, self._metadata_for_existing_extraction(extraction, path))
+            result = self.parse_energy_bill_text(text, self._metadata_for_existing_extraction(extraction, path) | extraction_metadata)
             self._fill_extraction_from_result(extraction, result, text)
             self._replace_history(extraction, result.history)
             self._update_linked_conversation(extraction)
@@ -236,18 +241,21 @@ class EnergyBillExtractorService:
         metadata = metadata or {}
         path = Path(file_path)
         self._validate_file(path)
-        text = self._extract_text(path)
+        text, extraction_metadata = self._extract_text(path)
         if not text.strip():
-            extraction = self._create_failed_extraction(metadata | self._file_metadata(path), "Nao foi possivel extrair texto do arquivo.")
+            extraction = self._create_failed_extraction(
+                metadata | self._file_metadata(path) | extraction_metadata,
+                self._empty_text_error_message(path, extraction_metadata),
+            )
             self._audit("energy_bill.extraction_failed", extraction)
             self.db.commit()
             self.db.refresh(extraction)
             return extraction
 
-        result = self.parse_energy_bill_text(text, metadata)
+        result = self.parse_energy_bill_text(text, metadata | extraction_metadata)
         extraction = self._create_extraction_from_result(
             result,
-            metadata | self._file_metadata(path) | {"raw_text": text},
+            metadata | self._file_metadata(path) | extraction_metadata | {"raw_text": text},
         )
         self._audit("energy_bill.extracted", extraction, {"status": extraction.status})
         self.db.commit()
@@ -266,14 +274,7 @@ class EnergyBillExtractorService:
         return path.read_bytes().decode("utf-8", errors="ignore")
 
     def extract_text_with_ocr(self, file_path: str) -> str:
-        if not settings.energy_bill_ocr_enabled:
-            logger.info("Energy bill OCR skipped because it is disabled.")
-            return ""
-        if not settings.energy_bill_allow_external_ai:
-            logger.warning("Energy bill OCR/external AI requested but ENERGY_BILL_ALLOW_EXTERNAL_AI is false.")
-            return ""
-        logger.warning("Energy bill OCR provider '%s' is not implemented in this local build.", settings.energy_bill_ocr_provider)
-        return ""
+        return self._run_ocr(Path(file_path)).text
 
     def parse_energy_bill_text(self, raw_text: str, metadata: dict[str, Any] | None = None) -> EnergyBillParseResult:
         metadata = metadata or {}
@@ -293,6 +294,7 @@ class EnergyBillExtractorService:
         result.needs_human_review = result.confidence_score < settings.energy_bill_min_confidence_auto_apply
         result.parsed_fields = {
             **result.parsed_fields,
+            **self._extraction_metadata_fields(metadata),
             "parser_confidence_inputs": {
                 "missing_fields": result.missing_fields,
                 "history_count": len(result.history),
@@ -444,15 +446,75 @@ class EnergyBillExtractorService:
         self.db.refresh(extraction)
         return self.get_extraction(extraction.id)
 
-    def _extract_text(self, path: Path) -> str:
+    def _extract_text(self, path: Path) -> tuple[str, dict[str, Any]]:
         suffix = path.suffix.lower()
         if suffix == ".pdf":
-            return self.extract_text_from_pdf(str(path))
+            text = self.extract_text_from_pdf(str(path))
+            if self._has_sufficient_text(text):
+                return text, {
+                    "extraction_method": "pdf_text",
+                    "raw_text_source": "pdf_text",
+                    "ocr_used": False,
+                    "ocr_provider": settings.energy_bill_ocr_provider,
+                    "ocr_page_count": 0,
+                    "ocr_error": None,
+                    "direct_text_length": len(text.strip()),
+                }
+            ocr_result = self._run_ocr(path)
+            return ocr_result.text, {
+                **ocr_result.metadata(),
+                "extraction_method": "ocr" if ocr_result.text.strip() else "pdf_text_insufficient",
+                "raw_text_source": "ocr" if ocr_result.text.strip() else "none",
+                "direct_text_length": len(text.strip()),
+            }
         if suffix == ".txt":
-            return path.read_text(encoding="utf-8", errors="ignore")
+            text = path.read_text(encoding="utf-8", errors="ignore")
+            return text, {
+                "extraction_method": "text_file",
+                "raw_text_source": "text_file",
+                "ocr_used": False,
+                "ocr_provider": settings.energy_bill_ocr_provider,
+                "ocr_page_count": 0,
+                "ocr_error": None,
+                "direct_text_length": len(text.strip()),
+            }
         if suffix in IMAGE_EXTENSIONS:
-            return self.extract_text_with_ocr(str(path))
-        return ""
+            ocr_result = self._run_ocr(path)
+            return ocr_result.text, {
+                **ocr_result.metadata(),
+                "extraction_method": "ocr" if ocr_result.text.strip() else "image_ocr_failed",
+                "raw_text_source": "ocr" if ocr_result.text.strip() else "none",
+                "direct_text_length": 0,
+            }
+        return "", {
+            "extraction_method": "unsupported",
+            "raw_text_source": "none",
+            "ocr_used": False,
+            "ocr_provider": settings.energy_bill_ocr_provider,
+            "ocr_page_count": 0,
+            "ocr_error": "Tipo de arquivo nao suportado.",
+        }
+
+    def _run_ocr(self, path: Path) -> OcrResult:
+        provider = get_ocr_provider(settings)
+        result = provider.extract_text(str(path), max_pages=settings.energy_bill_ocr_max_pages)
+        if result.error:
+            logger.info("Energy bill OCR finished without usable text. provider=%s used=%s", result.provider, result.used)
+        return result
+
+    @staticmethod
+    def _has_sufficient_text(text: str) -> bool:
+        return len((text or "").strip()) >= settings.energy_bill_min_text_length
+
+    def _empty_text_error_message(self, path: Path, metadata: dict[str, Any]) -> str:
+        suffix = path.suffix.lower()
+        ocr_error = metadata.get("ocr_error")
+        if suffix in IMAGE_EXTENSIONS or metadata.get("extraction_method") in {"pdf_text_insufficient", "image_ocr_failed"}:
+            if not settings.energy_bill_ocr_enabled:
+                return "O arquivo parece ser imagem ou PDF escaneado. Ative OCR local para leitura automatica ou revise manualmente."
+            if ocr_error:
+                return f"OCR nao conseguiu extrair texto legivel: {ocr_error}"
+        return "Nao foi possivel extrair texto do arquivo."
 
     def _validate_file(self, path: Path) -> None:
         if path.suffix.lower() not in ALLOWED_EXTENSIONS:
@@ -522,7 +584,7 @@ class EnergyBillExtractorService:
             confidence_score=0,
             needs_human_review=True,
             missing_fields=["texto legivel da conta de energia"],
-            parsed_fields={},
+            parsed_fields=self._extraction_metadata_fields(metadata),
             raw_extraction={},
             error_message=error_message,
         )
@@ -608,11 +670,21 @@ class EnergyBillExtractorService:
         extraction.raw_text_excerpt = sanitize_raw_excerpt(raw_text) if raw_text else None
         extraction.error_message = None
 
-    def _mark_extraction_failed(self, extraction: EnergyBillExtraction, error_message: str) -> None:
+    def _mark_extraction_failed(
+        self,
+        extraction: EnergyBillExtraction,
+        error_message: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
         extraction.status = "failed"
         extraction.needs_human_review = True
         extraction.error_message = error_message
         extraction.missing_fields = extraction.missing_fields or ["texto legivel da conta de energia"]
+        if metadata:
+            extraction.parsed_fields = {
+                **(extraction.parsed_fields or {}),
+                **self._extraction_metadata_fields(metadata),
+            }
         self._update_linked_conversation(extraction)
         self._audit("energy_bill.extraction_failed", extraction, {"origin": extraction.origin})
 
@@ -663,6 +735,20 @@ class EnergyBillExtractorService:
 
     def _file_metadata(self, path: Path) -> dict[str, Any]:
         return {"file_name": path.name, "file_type": path.suffix.lower().strip("."), "file_url": str(path)}
+
+    @staticmethod
+    def _extraction_metadata_fields(metadata: dict[str, Any] | None) -> dict[str, Any]:
+        metadata = metadata or {}
+        keys = [
+            "extraction_method",
+            "ocr_used",
+            "ocr_provider",
+            "ocr_page_count",
+            "ocr_error",
+            "raw_text_source",
+            "direct_text_length",
+        ]
+        return {key: metadata.get(key) for key in keys if key in metadata}
 
     def _lead_for_conversation(self, conversation_id: str) -> Lead | None:
         return self.db.scalar(select(Lead).where(Lead.conversation_id == conversation_id).order_by(desc(Lead.created_at)))

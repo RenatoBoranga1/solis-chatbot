@@ -13,7 +13,7 @@ Reduzir digitacao manual e melhorar a precisao do pre-dimensionamento. O sistema
 3. Se o atendimento estiver em contexto de orcamento e houver consentimento LGPD, o `ConversationService` cria automaticamente uma extracao em `energy_bill_extractions`.
 4. A extracao recebe uma origem: `chatbot`, `whatsapp`, `panel`, `manual_text` ou `api`.
 5. Para arquivos locais do widget/painel, o processamento e agendado em background e o chat continua rapido.
-6. O parser tenta extrair texto, consumo, valor, distribuidora e historico.
+6. O parser tenta extrair texto direto. Se o arquivo for imagem ou PDF escaneado e OCR estiver habilitado, usa OCR local.
 7. O sistema calcula media de consumo, potencia estimada e economia estimada.
 8. Se a confianca for baixa, o status fica `needs_review`.
 9. Um humano revisa e confirma.
@@ -57,6 +57,8 @@ Reduzir digitacao manual e melhorar a precisao do pre-dimensionamento. O sistema
 ENERGY_BILL_EXTRACTION_ENABLED=true
 ENERGY_BILL_OCR_ENABLED=false
 ENERGY_BILL_OCR_PROVIDER=disabled
+ENERGY_BILL_OCR_MAX_PAGES=3
+ENERGY_BILL_MIN_TEXT_LENGTH=80
 ENERGY_BILL_ALLOW_EXTERNAL_AI=false
 ENERGY_BILL_MAX_FILE_SIZE_MB=10
 ENERGY_BILL_STORE_RAW_TEXT=false
@@ -66,6 +68,15 @@ CHAT_ATTACHMENT_STORAGE_PATH=storage/chat_attachments
 ```
 
 Recomendacao inicial: manter OCR e IA externa desligados ate homologar o fluxo com contas reais e politica LGPD revisada.
+
+Para OCR local:
+
+```env
+ENERGY_BILL_OCR_ENABLED=true
+ENERGY_BILL_OCR_PROVIDER=local_tesseract
+```
+
+OCR externo/visao por IA fica apenas preparado. So use `ENERGY_BILL_OCR_PROVIDER=openai_vision` com `ENERGY_BILL_ALLOW_EXTERNAL_AI=true`, contrato/base legal revisados e chave configurada. Por padrao, nenhuma imagem e enviada para servico externo.
 
 ## Endpoints
 
@@ -128,6 +139,35 @@ O parser busca:
 
 Novos parsers podem ser adicionados em `backend/app/services/energy_bill_parsers/`.
 
+## OCR
+
+O OCR suporta PNG, JPG, JPEG, WEBP e PDFs escaneados. Para PDF, o sistema sempre tenta primeiro a extracao textual. Se o texto tiver pelo menos `ENERGY_BILL_MIN_TEXT_LENGTH` caracteres, o OCR nao e usado. Se o texto for vazio ou insuficiente, o OCR processa no maximo `ENERGY_BILL_OCR_MAX_PAGES` paginas.
+
+Providers:
+
+- `disabled`: padrao seguro, retorna texto vazio e erro controlado.
+- `local_tesseract`: usa `pytesseract`, `Pillow` e `pypdfium2`.
+- `openai_vision`: preparado, mas bloqueado sem `ENERGY_BILL_ALLOW_EXTERNAL_AI=true`.
+
+Metadados gravados em `parsed_fields`:
+
+- `extraction_method`: `pdf_text`, `text_file`, `ocr`, `pdf_text_insufficient`, `image_ocr_failed` ou `unsupported`;
+- `ocr_used`;
+- `ocr_provider`;
+- `ocr_page_count`;
+- `ocr_error`;
+- `raw_text_source`;
+- `direct_text_length`.
+
+Quando OCR estiver desabilitado e o arquivo parecer imagem ou PDF escaneado, o painel mostra: "O arquivo parece ser imagem ou PDF escaneado. Ative OCR local para leitura automatica ou revise manualmente." Quando OCR local extrair texto, o painel orienta revisar os dados antes de aplicar ao lead.
+
+Dependencias no Docker:
+
+- `tesseract-ocr`;
+- `tesseract-ocr-por`;
+- `tesseract-ocr-eng`;
+- pacotes Python `pytesseract`, `Pillow` e `pypdfium2`.
+
 ## LGPD e seguranca
 
 - Nao logar texto bruto completo da conta.
@@ -139,6 +179,8 @@ Novos parsers podem ser adicionados em `backend/app/services/energy_bill_parsers
 - Revisar permissoes do painel.
 - Usar storage privado em producao.
 - Ativar IA/OCR externo somente com base legal, contrato e politica de privacidade revisados.
+- Validar OCR com contas reais antes de ativar em producao.
+- Processar apenas as primeiras paginas configuradas para evitar carga excessiva.
 
 ## Propostas e kits
 
@@ -178,10 +220,11 @@ Painel:
 2. Entre no painel admin.
 3. Abra `Contas`.
 4. Envie um `.txt` com dados de conta ou cole texto em `Testar texto extraido`.
-5. Confira consumo, valor, historico, confianca e campos faltantes.
-6. Confirme a leitura.
-7. Aplique em um lead.
-8. Gere proposta e revise o kit recomendado.
+5. Envie tambem uma imagem/PDF escaneado em ambiente com OCR local habilitado.
+6. Confira consumo, valor, historico, confianca, campos faltantes e metadados de OCR.
+7. Confirme a leitura.
+8. Aplique em um lead.
+9. Gere proposta e revise o kit recomendado.
 
 Widget:
 
@@ -198,6 +241,9 @@ Widget:
 - [ ] Confirmar mascaramento de CPF/CNPJ.
 - [ ] Confirmar que arquivos grandes sao rejeitados.
 - [ ] Confirmar que OCR desligado nao quebra o fluxo.
+- [ ] Habilitar `local_tesseract` em homologacao e validar PNG/JPG/WEBP.
+- [ ] Validar PDF textual sem OCR e PDF escaneado com OCR.
+- [ ] Confirmar `parsed_fields.ocr_used`, `ocr_provider`, `ocr_page_count` e `ocr_error`.
 - [ ] Revisar status `needs_review`.
 - [ ] Aplicar extracao em lead real de teste.
 - [ ] Gerar proposta e conferir kit recomendado.

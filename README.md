@@ -237,6 +237,8 @@ A tela `Contas` do painel permite enviar PDF, imagem ou texto de conta de energi
 
 Quando o cliente envia PDF ou imagem pelo widget durante um fluxo de orcamento com consentimento LGPD, o backend registra `Attachment`, cria automaticamente uma `EnergyBillExtraction` com `origin=chatbot`, deixa o status como `processing` e agenda a leitura em background. O painel mostra a origem da conta, o vinculo com conversa/lead e os campos extraidos para revisao. Mensagens WhatsApp com midia tambem ficam preparadas para `origin=whatsapp`; enquanto o download privado da midia Meta nao estiver habilitado, o arquivo fica como `whatsapp://media/<media_id>` para revisao operacional.
 
+Para imagens e PDFs escaneados, o modulo possui OCR local opcional com Tesseract. PDF textual continua sendo lido primeiro sem OCR; se o texto for insuficiente, o sistema tenta OCR quando `ENERGY_BILL_OCR_ENABLED=true`. O painel exibe metodo de extracao, provider OCR, paginas processadas e erro amigavel quando OCR estiver desligado ou indisponivel.
+
 Dados extraidos:
 
 - distribuidora;
@@ -257,6 +259,8 @@ Variaveis:
 ENERGY_BILL_EXTRACTION_ENABLED=true
 ENERGY_BILL_OCR_ENABLED=false
 ENERGY_BILL_OCR_PROVIDER=disabled
+ENERGY_BILL_OCR_MAX_PAGES=3
+ENERGY_BILL_MIN_TEXT_LENGTH=80
 ENERGY_BILL_ALLOW_EXTERNAL_AI=false
 ENERGY_BILL_MAX_FILE_SIZE_MB=10
 ENERGY_BILL_STORE_RAW_TEXT=false
@@ -265,7 +269,14 @@ ENERGY_BILL_STORAGE_PATH=storage/energy_bills
 CHAT_ATTACHMENT_STORAGE_PATH=storage/chat_attachments
 ```
 
-O OCR e IA externa ficam desligados por padrao. A extracao deterministica nao grava texto bruto completo, mascara CPF/CNPJ e gera status `needs_review` quando a confianca fica abaixo do limite. Guia completo: [`docs/energy-bill-extraction.md`](docs/energy-bill-extraction.md).
+Para habilitar OCR local em homologacao:
+
+```env
+ENERGY_BILL_OCR_ENABLED=true
+ENERGY_BILL_OCR_PROVIDER=local_tesseract
+```
+
+O OCR externo/IA visual fica desligado por padrao e so deve ser usado com `ENERGY_BILL_ALLOW_EXTERNAL_AI=true`, contrato/base legal revisados e chave configurada. A extracao nao grava texto bruto completo, mascara CPF/CNPJ e gera status `needs_review` quando a confianca fica abaixo do limite. Guia completo: [`docs/energy-bill-extraction.md`](docs/energy-bill-extraction.md).
 
 ## WhatsApp Cloud API oficial
 

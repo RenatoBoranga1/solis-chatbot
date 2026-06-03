@@ -103,12 +103,18 @@ Confirmar tabelas:
 
 - Configurar `ENERGY_BILL_EXTRACTION_ENABLED=true`.
 - Manter `ENERGY_BILL_OCR_ENABLED=false` ate homologar OCR com seguranca.
+- Para habilitar OCR local, configurar `ENERGY_BILL_OCR_ENABLED=true` e `ENERGY_BILL_OCR_PROVIDER=local_tesseract`.
+- Configurar `ENERGY_BILL_OCR_MAX_PAGES=3` e `ENERGY_BILL_MIN_TEXT_LENGTH=80` como ponto de partida.
 - Manter `ENERGY_BILL_ALLOW_EXTERNAL_AI=false` ate revisar LGPD, contrato e politica de privacidade.
 - Configurar `ENERGY_BILL_MAX_FILE_SIZE_MB` conforme limite operacional.
 - Configurar `ENERGY_BILL_STORE_RAW_TEXT=false` em producao, salvo necessidade formal e base legal.
 - Configurar `ENERGY_BILL_STORAGE_PATH` em volume persistente ou storage privado.
 - Configurar `CHAT_ATTACHMENT_STORAGE_PATH` em volume persistente ou storage privado para arquivos enviados pelo widget.
 - Testar upload de PDF/TXT/imagem pelo painel `Contas`.
+- Confirmar que a imagem Docker instalou `tesseract-ocr`, `tesseract-ocr-por` e `tesseract-ocr-eng`.
+- Testar PNG/JPG/WEBP e PDF escaneado com OCR local em homologacao.
+- Confirmar que PDF textual nao usa OCR quando a extracao direta for suficiente.
+- Confirmar que o painel mostra metodo de extracao, OCR usado, provider, paginas processadas e erro amigavel.
 - Testar envio de PDF/imagem pelo widget em fluxo de orcamento e confirmar `origin=chatbot`.
 - Confirmar que `conversation.collected_data` e `lead.extra` recebem consumo, valor, distribuidora, confianca e status da leitura.
 - Para WhatsApp, baixar midia da Meta para storage privado antes de habilitar leitura automatica completa de `origin=whatsapp`.

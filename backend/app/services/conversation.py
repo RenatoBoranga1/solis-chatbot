@@ -6,6 +6,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.phone import normalize_phone
 from app.core.privacy import LGPD_CONSENT_MESSAGE, encrypt_value
 from app.core.security import sanitize_text
@@ -219,6 +220,16 @@ class ConversationService:
         )
         if background_tasks:
             background_tasks.add_task(process_energy_bill_extraction_background, extraction.id)
+        if (attachment.file_type or "").lower() == "image":
+            if settings.energy_bill_ocr_enabled:
+                return (
+                    "Recebi a imagem da sua conta de energia. Vou tentar ler os dados automaticamente. "
+                    "A equipe revisara as informacoes antes da proposta final."
+                )
+            return (
+                "Recebi a imagem da sua conta. Ela ficara disponivel para revisao da equipe. "
+                "Para leitura automatica de fotos, o OCR precisa estar habilitado no sistema."
+            )
         return (
             "Recebi sua conta de energia e registrei para leitura inteligente. "
             "A equipe da Solar Solucoes podera revisar os dados extraidos antes de preparar a proposta."

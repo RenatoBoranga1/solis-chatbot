@@ -646,6 +646,11 @@ input:disabled {
   background: #fff3cf;
 }
 
+.proposal-alert--success {
+  color: #12633c;
+  background: #e6f7ef;
+}
+
 .kit-recommendation-card,
 .kit-simulator,
 .kit-card {

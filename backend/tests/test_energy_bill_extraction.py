@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 from fastapi.testclient import TestClient
 
@@ -25,6 +26,8 @@ from app.schemas import ChatMessageIn
 from app.services.conversation import ConversationService
 from app.services.energy_bill_extractor import EnergyBillExtractorService
 from app.services.energy_bill_parsers.base import sanitize_raw_excerpt
+from app.services.ocr import get_ocr_provider
+from app.services.ocr.base import OcrResult
 
 
 SAMPLE_BILL_TEXT = """
@@ -190,6 +193,18 @@ def kit_fixture() -> ProposalKit:
 
 
 class EnergyBillParserTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.original_ocr_enabled = settings.energy_bill_ocr_enabled
+        self.original_ocr_provider = settings.energy_bill_ocr_provider
+        self.original_allow_external_ai = settings.energy_bill_allow_external_ai
+        self.original_min_text_length = settings.energy_bill_min_text_length
+
+    def tearDown(self) -> None:
+        settings.energy_bill_ocr_enabled = self.original_ocr_enabled
+        settings.energy_bill_ocr_provider = self.original_ocr_provider
+        settings.energy_bill_allow_external_ai = self.original_allow_external_ai
+        settings.energy_bill_min_text_length = self.original_min_text_length
+
     def test_generic_parser_extracts_consumption_value_and_history(self):
         result = EnergyBillExtractorService(FakeDb()).parse_energy_bill_text(SAMPLE_BILL_TEXT)
 
@@ -215,12 +230,94 @@ class EnergyBillParserTest(unittest.TestCase):
         self.assertTrue(low.needs_human_review)
 
     def test_ocr_disabled_does_not_break(self):
-        original = settings.energy_bill_ocr_enabled
         settings.energy_bill_ocr_enabled = False
-        try:
-            self.assertEqual(EnergyBillExtractorService(FakeDb()).extract_text_with_ocr("conta.png"), "")
-        finally:
-            settings.energy_bill_ocr_enabled = original
+        self.assertEqual(EnergyBillExtractorService(FakeDb()).extract_text_with_ocr("conta.png"), "")
+
+    def test_image_uses_mocked_ocr_when_enabled(self):
+        settings.energy_bill_ocr_enabled = True
+        settings.energy_bill_ocr_provider = "local_tesseract"
+        fake_provider = Mock()
+        fake_provider.extract_text.return_value = OcrResult(SAMPLE_BILL_TEXT, "local_tesseract", True, 1)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "conta.png"
+            path.write_bytes(b"fake-image")
+            with patch("app.services.energy_bill_extractor.get_ocr_provider", return_value=fake_provider):
+                extraction = EnergyBillExtractorService(FakeDb()).extract_from_file(str(path))
+
+        self.assertEqual(extraction.status, "extracted")
+        self.assertEqual(extraction.parsed_fields["ocr_used"], True)
+        self.assertEqual(extraction.parsed_fields["ocr_provider"], "local_tesseract")
+        self.assertEqual(extraction.parsed_fields["raw_text_source"], "ocr")
+
+    def test_image_with_ocr_disabled_returns_controlled_failure(self):
+        settings.energy_bill_ocr_enabled = False
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "conta.jpg"
+            path.write_bytes(b"fake-image")
+            extraction = EnergyBillExtractorService(FakeDb()).extract_from_file(str(path))
+
+        self.assertEqual(extraction.status, "failed")
+        self.assertIn("Ative OCR local", extraction.error_message)
+        self.assertEqual(extraction.parsed_fields["ocr_used"], False)
+        self.assertEqual(extraction.parsed_fields["ocr_provider"], "disabled")
+
+    def test_textual_pdf_does_not_call_ocr(self):
+        settings.energy_bill_ocr_enabled = True
+        settings.energy_bill_ocr_provider = "local_tesseract"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "conta.pdf"
+            path.write_text(SAMPLE_BILL_TEXT, encoding="utf-8")
+            with patch("app.services.energy_bill_extractor.get_ocr_provider") as provider_factory:
+                extraction = EnergyBillExtractorService(FakeDb()).extract_from_file(str(path))
+
+        provider_factory.assert_not_called()
+        self.assertEqual(extraction.status, "extracted")
+        self.assertEqual(extraction.parsed_fields["ocr_used"], False)
+        self.assertEqual(extraction.parsed_fields["extraction_method"], "pdf_text")
+
+    def test_scanned_pdf_attempts_ocr_when_direct_text_is_insufficient(self):
+        settings.energy_bill_ocr_enabled = True
+        settings.energy_bill_ocr_provider = "local_tesseract"
+        settings.energy_bill_min_text_length = 80
+        fake_provider = Mock()
+        fake_provider.extract_text.return_value = OcrResult(SAMPLE_BILL_TEXT, "local_tesseract", True, 2)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "conta.pdf"
+            path.write_text("PDF", encoding="utf-8")
+            with patch("app.services.energy_bill_extractor.get_ocr_provider", return_value=fake_provider):
+                extraction = EnergyBillExtractorService(FakeDb()).extract_from_file(str(path))
+
+        self.assertEqual(extraction.status, "extracted")
+        self.assertEqual(extraction.parsed_fields["ocr_used"], True)
+        self.assertEqual(extraction.parsed_fields["ocr_page_count"], 2)
+        self.assertEqual(extraction.parsed_fields["extraction_method"], "ocr")
+
+    def test_external_ocr_provider_is_blocked_without_explicit_permission(self):
+        settings.energy_bill_ocr_enabled = True
+        settings.energy_bill_ocr_provider = "openai_vision"
+        settings.energy_bill_allow_external_ai = False
+
+        provider = get_ocr_provider(settings)
+        result = provider.extract_text("conta.png")
+
+        self.assertEqual(result.text, "")
+        self.assertFalse(result.used)
+        self.assertIn("ENERGY_BILL_ALLOW_EXTERNAL_AI=false", result.error)
+
+    def test_ocr_failure_does_not_break_extraction(self):
+        settings.energy_bill_ocr_enabled = True
+        settings.energy_bill_ocr_provider = "local_tesseract"
+        fake_provider = Mock()
+        fake_provider.extract_text.return_value = OcrResult("", "local_tesseract", False, 0, "Tesseract indisponivel.")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "conta.webp"
+            path.write_bytes(b"fake-image")
+            with patch("app.services.energy_bill_extractor.get_ocr_provider", return_value=fake_provider):
+                extraction = EnergyBillExtractorService(FakeDb()).extract_from_file(str(path))
+
+        self.assertEqual(extraction.status, "failed")
+        self.assertEqual(extraction.parsed_fields["ocr_error"], "Tesseract indisponivel.")
+        self.assertIn("Tesseract indisponivel", extraction.error_message)
 
     def test_rejects_invalid_file_type(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -319,6 +416,32 @@ class EnergyBillServiceTest(unittest.TestCase):
         )
 
         self.assertFalse([item for item in db.added if isinstance(item, EnergyBillExtraction)])
+
+    def test_chatbot_image_ack_mentions_ocr_when_disabled(self):
+        original = settings.energy_bill_ocr_enabled
+        settings.energy_bill_ocr_enabled = False
+        customer = customer_fixture()
+        lead = lead_fixture(customer)
+        conversation = conversation_fixture(customer)
+        db = FakeDb(
+            objects={(Conversation, conversation.id): conversation, (Customer, customer.id): customer, (Lead, lead.id): lead},
+            scalar_queue=[None, lead],
+        )
+        try:
+            response = ConversationService(db).handle_message(
+                ChatMessageIn(
+                    conversation_id=conversation.id,
+                    customer_id=customer.id,
+                    message="Segue foto da minha conta de energia",
+                    attachment_url="storage/chat_attachments/conta.png",
+                    media_type="image",
+                )
+            )
+        finally:
+            settings.energy_bill_ocr_enabled = original
+
+        self.assertIn("OCR precisa estar habilitado", response.response)
+        self.assertTrue([item for item in db.added if isinstance(item, EnergyBillExtraction)])
 
     def test_pending_extraction_processing_updates_conversation_and_lead(self):
         customer = customer_fixture()

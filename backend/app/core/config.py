@@ -43,6 +43,8 @@ class Settings(BaseSettings):
     energy_bill_extraction_enabled: bool = True
     energy_bill_ocr_enabled: bool = False
     energy_bill_ocr_provider: str = "disabled"
+    energy_bill_ocr_max_pages: int = 3
+    energy_bill_min_text_length: int = 80
     energy_bill_allow_external_ai: bool = False
     energy_bill_max_file_size_mb: int = 10
     energy_bill_store_raw_text: bool = False
