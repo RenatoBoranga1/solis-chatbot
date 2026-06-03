@@ -420,6 +420,106 @@ class ProposalPriceItemActivePatch(BaseModel):
     active: bool
 
 
+class ProposalKitItemBase(BaseModel):
+    category: str
+    description: str
+    quantity: float = 1
+    unit: str = "un"
+    unit_price: float = 0
+    total_price: float | None = None
+    sort_order: int = 0
+
+
+class ProposalKitItemCreate(ProposalKitItemBase):
+    pass
+
+
+class ProposalKitItemUpdate(BaseModel):
+    category: str | None = None
+    description: str | None = None
+    quantity: float | None = None
+    unit: str | None = None
+    unit_price: float | None = None
+    sort_order: int | None = None
+
+
+class ProposalKitItemOut(ProposalKitItemBase):
+    id: str
+    kit_id: str
+    total_price: float
+    created_at: datetime
+    updated_at: datetime | None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ProposalKitBase(BaseModel):
+    name: str = Field(max_length=180)
+    description: str | None = None
+    min_monthly_consumption_kwh: float | None = None
+    max_monthly_consumption_kwh: float | None = None
+    min_power_kwp: float | None = None
+    max_power_kwp: float | None = None
+    suggested_power_kwp: float
+    estimated_monthly_generation_kwh: float | None = None
+    module_count: int | None = None
+    module_power_wp: int | None = None
+    inverter_power_kw: float | None = None
+    base_price: float = 0
+    active: bool = True
+    sort_order: int = 0
+    notes: str | None = None
+
+
+class ProposalKitCreate(ProposalKitBase):
+    items: list[ProposalKitItemCreate] = Field(default_factory=list)
+
+
+class ProposalKitUpdate(BaseModel):
+    name: str | None = Field(default=None, max_length=180)
+    description: str | None = None
+    min_monthly_consumption_kwh: float | None = None
+    max_monthly_consumption_kwh: float | None = None
+    min_power_kwp: float | None = None
+    max_power_kwp: float | None = None
+    suggested_power_kwp: float | None = None
+    estimated_monthly_generation_kwh: float | None = None
+    module_count: int | None = None
+    module_power_wp: int | None = None
+    inverter_power_kw: float | None = None
+    base_price: float | None = None
+    active: bool | None = None
+    sort_order: int | None = None
+    notes: str | None = None
+
+
+class ProposalKitOut(ProposalKitBase):
+    id: str
+    created_at: datetime
+    updated_at: datetime | None
+    items: list[ProposalKitItemOut] = Field(default_factory=list)
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ProposalKitActivePatch(BaseModel):
+    active: bool
+
+
+class ProposalKitSimulationIn(BaseModel):
+    average_bill: float | None = None
+    estimated_monthly_generation_kwh: float | None = None
+    estimated_power_kwp: float | None = None
+
+
+class ProposalKitSimulationOut(BaseModel):
+    average_bill: float | None
+    estimated_monthly_generation_kwh: float | None
+    estimated_power_kwp: float | None
+    selected_kit: ProposalKitOut | None
+    selection_reason: str | None
+
+
 ProposalCustomerResponseType = Literal[
     "interested",
     "request_changes",
@@ -552,6 +652,9 @@ class ProposalBase(BaseModel):
     estimated_system_power_kwp: float | None = None
     estimated_monthly_generation_kwh: float | None = None
     estimated_savings_percentage: float | None = None
+    recommended_kit_id: str | None = None
+    recommended_kit_name: str | None = None
+    kit_selection_reason: str | None = None
     validity_days: int = 7
     notes: str | None = None
     internal_notes: str | None = None
@@ -578,6 +681,9 @@ class ProposalUpdate(BaseModel):
     estimated_system_power_kwp: float | None = None
     estimated_monthly_generation_kwh: float | None = None
     estimated_savings_percentage: float | None = None
+    recommended_kit_id: str | None = None
+    recommended_kit_name: str | None = None
+    kit_selection_reason: str | None = None
     validity_days: int | None = None
     notes: str | None = None
     internal_notes: str | None = None
@@ -597,6 +703,7 @@ class ProposalOut(ProposalBase):
     events: list[ProposalEventOut] = Field(default_factory=list)
     followups: list[ProposalFollowUpOut] = Field(default_factory=list)
     customer_responses: list[ProposalCustomerResponseOut] = Field(default_factory=list)
+    recommended_kit: ProposalKitOut | None = None
 
     model_config = ConfigDict(from_attributes=True)
 

@@ -52,9 +52,20 @@ POST /proposal-price-items
 PUT /proposal-price-items/{id}
 PATCH /proposal-price-items/{id}/active
 DELETE /proposal-price-items/{id}
+
+GET /proposal-kits
+POST /proposal-kits
+POST /proposal-kits/simulate
+GET /proposal-kits/{kit_id}
+PUT /proposal-kits/{kit_id}
+PATCH /proposal-kits/{kit_id}/active
+DELETE /proposal-kits/{kit_id}
+POST /proposal-kits/{kit_id}/items
+PUT /proposal-kits/{kit_id}/items/{item_id}
+DELETE /proposal-kits/{kit_id}/items/{item_id}
 ```
 
-Visualizacao e permitida para perfis internos. Criacao, edicao, PDF, envio, follow-ups, links seguros, configuracoes comerciais e gestao da tabela de precos sao restritos a `admin`, `comercial` e `gestor`. As rotas `/public/proposals/{token}` sao publicas, mas exigem token valido, nao revogado e nao expirado.
+Visualizacao e permitida para perfis internos. Criacao, edicao, PDF, envio, follow-ups, links seguros, configuracoes comerciais e gestao da tabela de precos sao restritos a `admin`, `comercial` e `gestor`. Kits podem ser visualizados por `admin`, `comercial`, `gestor`, `suporte` e `tecnico`; gestao de kits fica restrita a `admin`, `comercial` e `gestor`. As rotas `/public/proposals/{token}` sao publicas, mas exigem token valido, nao revogado e nao expirado.
 
 ## Status
 
@@ -96,6 +107,47 @@ Categorias recomendadas:
 
 Propostas geradas a partir de lead usam somente itens ativos. A tabela ajuda a reduzir retrabalho, mas nao substitui revisao humana. O bot e a IA nao devem definir preco final.
 
+## Kits fotovoltaicos configuraveis
+
+A tabela `proposal_kits` permite cadastrar kits comerciais por faixa de consumo e potencia:
+
+- nome e descricao;
+- consumo minimo/maximo em kWh/mes;
+- potencia minima/maxima em kWp;
+- potencia sugerida;
+- geracao mensal estimada;
+- quantidade de modulos e potencia por modulo;
+- potencia do inversor;
+- preco base;
+- status ativo/inativo;
+- ordem e observacoes.
+
+A tabela `proposal_kit_items` permite detalhar os itens de cada kit. Se um kit nao tiver itens, o sistema cria um item unico `Kit fotovoltaico recomendado` usando o `base_price`.
+
+Ao gerar proposta por lead, a selecao automatica segue esta ordem:
+
+1. kit ativo cuja faixa de potencia contem a potencia estimada;
+2. kit ativo cuja faixa de consumo/geracao contem a geracao estimada;
+3. kit ativo imediatamente acima da potencia estimada;
+4. maior kit ativo;
+5. fallback para tabela de precos ou itens padrao zerados.
+
+Campos gravados na proposta:
+
+- `recommended_kit_id`;
+- `recommended_kit_name`;
+- `kit_selection_reason`.
+
+Exemplo com R$ 350,00 de conta media:
+
+- geracao estimada aproximada: 313 kWh/mes;
+- potencia estimada aproximada: 2,32 kWp;
+- se houver kit ativo compativel, ele sera exibido como recomendado.
+
+A proposta continua `draft`. O kit e uma recomendacao, nao um dimensionamento definitivo. Revise telhado, sombreamento, padrao de entrada, concessionaria, estrutura, valores e condicoes antes de enviar.
+
+Guia completo: [`proposal-kits.md`](proposal-kits.md).
+
 ## Aplicar tabela em proposta existente
 
 Use:
@@ -114,6 +166,7 @@ O `ProposalPdfService` gera um PDF com:
 - dados do cliente;
 - resumo da solucao;
 - potencia estimada, geracao mensal estimada e economia estimada;
+- kit fotovoltaico recomendado, quando houver;
 - tabela de itens com categoria, descricao, quantidade, unidade, valor unitario e total;
 - resumo financeiro;
 - condicoes de pagamento;
@@ -305,6 +358,13 @@ Acoes registradas em `audit_logs`:
 - `proposal_price_item.updated`;
 - `proposal_price_item.active_changed`;
 - `proposal_price_item.deleted`.
+- `proposal_kit.created`;
+- `proposal_kit.updated`;
+- `proposal_kit.active_changed`;
+- `proposal_kit.deleted`;
+- `proposal_kit.item_created`;
+- `proposal_kit.item_updated`;
+- `proposal_kit.item_deleted`.
 
 ## Cuidados comerciais
 

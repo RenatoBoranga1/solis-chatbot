@@ -11,7 +11,7 @@ from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.models import AIAnalysis, AuditLog, Conversation, Handoff, Lead, Message, Ticket
+from app.models import AIAnalysis, AuditLog, Conversation, Handoff, Lead, Message, Proposal, Ticket
 from app.schemas import DashboardAIInsights
 from app.services.ai_prompts import AI_ANALYSIS_SYSTEM_PROMPT
 from app.services.intent import classify_intent, normalize
@@ -51,8 +51,9 @@ class AIAnalysisService:
     def analyze_lead(self, lead_id: str) -> AIAnalysis:
         lead = self._require(Lead, lead_id, "Lead not found")
         conversation = self.db.get(Conversation, lead.conversation_id) if lead.conversation_id else None
-        fallback = self._rule_lead_analysis(lead, conversation)
-        payload = self._maybe_generative_analysis(self._lead_context(lead, conversation), fallback)
+        proposal = self._proposal_for_lead(lead.id)
+        fallback = self._rule_lead_analysis(lead, conversation, proposal)
+        payload = self._maybe_generative_analysis(self._lead_context(lead, conversation, proposal), fallback)
         return self._persist_analysis(
             analysis_type="lead",
             payload=payload,
@@ -178,7 +179,7 @@ class AIAnalysisService:
             }
         )
 
-    def _rule_lead_analysis(self, lead: Lead, conversation: Conversation | None) -> AnalysisPayload:
+    def _rule_lead_analysis(self, lead: Lead, conversation: Conversation | None, proposal: Proposal | None = None) -> AnalysisPayload:
         score = self._lead_score(lead, conversation)
         probability = self._probability_from_score(score)
         missing_data = self._lead_missing_data(lead)
@@ -188,6 +189,29 @@ class AIAnalysisService:
             next_action = "Priorizar contato comercial e apresentar possibilidades de financiamento após análise da conta."
         if score >= 75 and not missing_data:
             next_action = "Gerar proposta comercial como rascunho e revisar valores, condições técnicas e comerciais antes do envio."
+        suggested_reply = (
+            "Ola! Ja temos as informacoes iniciais para avancar com sua analise. "
+            "Para deixar a proposta mais precisa, pode enviar uma foto ou PDF da sua conta de energia?"
+        )
+        tags = ["lead", f"lead_{self._lead_label(score)}", f"conversao_{probability}"]
+        raw_analysis = {"mode": "rules", "lead_score": score, "financing_interest": bool(lead.financing_interest)}
+        if proposal and proposal.recommended_kit_name:
+            next_action = (
+                f"Validar o kit recomendado ({proposal.recommended_kit_name}) antes do envio, confirmando conta de energia, "
+                "tipo de telhado, area disponivel, sombreamento, padrao de entrada e condicoes comerciais."
+            )
+            suggested_reply = (
+                "Perfeito. A equipe ja consegue preparar uma pre-proposta com kit recomendado, mas vamos revisar os dados "
+                "tecnicos e comerciais antes de confirmar valores ou dimensionamento final."
+            )
+            tags.extend(["kit_recomendado", normalize(proposal.recommended_kit_name).replace(" ", "_")])
+            raw_analysis.update(
+                {
+                    "recommended_kit_id": proposal.recommended_kit_id,
+                    "recommended_kit_name": proposal.recommended_kit_name,
+                    "kit_selection_reason": proposal.kit_selection_reason,
+                }
+            )
         summary = (
             f"Lead com score {score}/100 e chance {probability} de conversão. "
             "Os dados coletados permitem abordagem comercial objetiva."
@@ -204,13 +228,9 @@ class AIAnalysisService:
                 "priority_score": score,
                 "missing_data": missing_data,
                 "recommended_next_action": next_action,
-                "suggested_reply": (
-                    "Olá! Já temos as informações iniciais para avançar com sua análise. "
-                    "Para deixar a proposta mais precisa, pode enviar uma foto ou PDF da sua conta de energia?"
-                ),
-                "tags": ["lead", f"lead_{self._lead_label(score)}", f"conversao_{probability}"]
-                + (["gerar_proposta_comercial"] if score >= 75 and not missing_data else []),
-                "raw_analysis": {"mode": "rules", "lead_score": score, "financing_interest": bool(lead.financing_interest)},
+                "suggested_reply": suggested_reply,
+                "tags": tags + (["gerar_proposta_comercial"] if score >= 75 and not missing_data else []),
+                "raw_analysis": raw_analysis,
             }
         )
 
@@ -388,8 +408,12 @@ class AIAnalysisService:
             "ticket": self._mask_json(self._ticket_brief(ticket)) if ticket else None,
         }
 
-    def _lead_context(self, lead: Lead, conversation: Conversation | None) -> dict[str, Any]:
-        return {"lead": self._mask_json(self._lead_brief(lead)), "conversation": self._conversation_context(conversation, lead, None) if conversation else None}
+    def _lead_context(self, lead: Lead, conversation: Conversation | None, proposal: Proposal | None = None) -> dict[str, Any]:
+        return {
+            "lead": self._mask_json(self._lead_brief(lead)),
+            "proposal": self._mask_json(self._proposal_brief(proposal)) if proposal else None,
+            "conversation": self._conversation_context(conversation, lead, None) if conversation else None,
+        }
 
     def _ticket_context(self, ticket: Ticket, conversation: Conversation | None) -> dict[str, Any]:
         return {"ticket": self._mask_json(self._ticket_brief(ticket)), "conversation": self._conversation_context(conversation, None, ticket) if conversation else None}
@@ -421,6 +445,24 @@ class AIAnalysisService:
             "extra": ticket.extra or {},
         }
 
+    def _proposal_brief(self, proposal: Proposal | None) -> dict[str, Any]:
+        if not proposal:
+            return {}
+        return {
+            "id": proposal.id,
+            "status": proposal.status,
+            "recommended_kit_id": proposal.recommended_kit_id,
+            "recommended_kit_name": proposal.recommended_kit_name,
+            "kit_selection_reason": proposal.kit_selection_reason,
+            "estimated_system_power_kwp": float(proposal.estimated_system_power_kwp)
+            if proposal.estimated_system_power_kwp is not None
+            else None,
+            "estimated_monthly_generation_kwh": float(proposal.estimated_monthly_generation_kwh)
+            if proposal.estimated_monthly_generation_kwh is not None
+            else None,
+            "total_amount": float(proposal.total_amount) if proposal.total_amount is not None else None,
+        }
+
     def _conversation_text(self, conversation: Conversation | None) -> str:
         if not conversation:
             return ""
@@ -439,6 +481,9 @@ class AIAnalysisService:
 
     def _ticket_for_conversation(self, conversation_id: str) -> Ticket | None:
         return self.db.scalar(select(Ticket).where(Ticket.conversation_id == conversation_id).order_by(desc(Ticket.created_at)).limit(1))
+
+    def _proposal_for_lead(self, lead_id: str) -> Proposal | None:
+        return self.db.scalar(select(Proposal).where(Proposal.lead_id == lead_id).order_by(desc(Proposal.created_at)).limit(1))
 
     def _sentiment(self, text: str) -> str:
         normalized = normalize(text)

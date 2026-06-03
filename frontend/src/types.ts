@@ -105,6 +105,50 @@ export type ProposalItem = {
   updated_at: string | null;
 };
 
+export type ProposalKitItem = {
+  id: string;
+  kit_id: string;
+  category: string;
+  description: string;
+  quantity: number;
+  unit: string;
+  unit_price: number;
+  total_price: number;
+  sort_order: number;
+  created_at: string;
+  updated_at: string | null;
+};
+
+export type ProposalKit = {
+  id: string;
+  name: string;
+  description: string | null;
+  min_monthly_consumption_kwh: number | null;
+  max_monthly_consumption_kwh: number | null;
+  min_power_kwp: number | null;
+  max_power_kwp: number | null;
+  suggested_power_kwp: number;
+  estimated_monthly_generation_kwh: number | null;
+  module_count: number | null;
+  module_power_wp: number | null;
+  inverter_power_kw: number | null;
+  base_price: number;
+  active: boolean;
+  sort_order: number;
+  notes: string | null;
+  created_at: string;
+  updated_at: string | null;
+  items: ProposalKitItem[];
+};
+
+export type ProposalKitSimulation = {
+  average_bill: number | null;
+  estimated_monthly_generation_kwh: number | null;
+  estimated_power_kwp: number | null;
+  selected_kit: ProposalKit | null;
+  selection_reason: string | null;
+};
+
 export type Proposal = {
   id: string;
   customer_id: string | null;
@@ -122,6 +166,9 @@ export type Proposal = {
   estimated_system_power_kwp: number | null;
   estimated_monthly_generation_kwh: number | null;
   estimated_savings_percentage: number | null;
+  recommended_kit_id: string | null;
+  recommended_kit_name: string | null;
+  kit_selection_reason: string | null;
   validity_days: number;
   notes: string | null;
   internal_notes: string | null;
@@ -133,6 +180,7 @@ export type Proposal = {
   created_at: string;
   updated_at: string | null;
   items: ProposalItem[];
+  recommended_kit?: ProposalKit | null;
   share_links?: ProposalShareLink[];
   events?: ProposalEvent[];
   followups?: ProposalFollowUp[];

@@ -53,6 +53,8 @@ Confirmar tabelas:
 - `proposals`.
 - `proposal_items`.
 - `proposal_price_items`.
+- `proposal_kits`.
+- `proposal_kit_items`.
 - `proposal_share_links`.
 - `proposal_customer_responses`.
 - `proposal_events`.
@@ -75,6 +77,11 @@ Confirmar tabelas:
 - Revisar a aba `Configuracoes comerciais` no painel antes da primeira proposta real.
 - Configurar SMTP para envio real por e-mail: `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM_EMAIL`, `SMTP_FROM_NAME` e `SMTP_USE_TLS`.
 - Cadastrar e revisar a tabela de precos antes de gerar propostas reais a partir de lead.
+- Cadastrar kits fotovoltaicos reais antes de usar recomendacao automatica em propostas.
+- Confirmar que kits demonstrativos do seed estao com `base_price=0` ou foram substituidos por valores revisados.
+- Validar o simulador de kits com uma conta media, por exemplo R$ 350,00.
+- Confirmar que proposta gerada por lead com kit recomendado permanece `draft`.
+- Conferir que o PDF mostra a secao `Kit fotovoltaico recomendado`.
 - Confirmar que propostas sem tabela ativa continuam com valores zerados para revisao manual.
 - Nao enviar caminho local do PDF ao cliente.
 - Validar envio manual, WhatsApp, e-mail e link seguro em ambiente de homologacao.
@@ -104,7 +111,7 @@ cd backend
 python -m unittest discover tests
 ```
 
-Os testes devem cobrir webhook, assinatura, deduplicacao, anexos, auditoria, `send_errors`, continuidade omnichannel, propostas, tabela de precos, link seguro, resposta digital, follow-ups, configuracoes comerciais, classificacao de gravidade e handoff.
+Os testes devem cobrir webhook, assinatura, deduplicacao, anexos, auditoria, `send_errors`, continuidade omnichannel, propostas, kits fotovoltaicos, tabela de precos, link seguro, resposta digital, follow-ups, configuracoes comerciais, classificacao de gravidade e handoff.
 Também devem cobrir análise por regras, lead quente, chamado crítico, resposta sugerida e endpoints de IA.
 
 ## Observabilidade e seguranca

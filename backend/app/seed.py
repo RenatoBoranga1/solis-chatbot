@@ -2,7 +2,7 @@ from sqlalchemy import select
 
 from app.core.security import hash_password
 from app.db.session import SessionLocal
-from app.models import KnowledgeBaseArticle, User
+from app.models import KnowledgeBaseArticle, ProposalKit, User
 
 
 def seed() -> None:
@@ -86,6 +86,78 @@ def seed() -> None:
             for field in ["video_title", "video_url", "resource_type"]:
                 if getattr(seed_article, field) and not getattr(article, field):
                     setattr(article, field, getattr(seed_article, field))
+
+        # Kits demonstrativos: revise faixas, equipamentos e valores antes de usar em producao.
+        seed_kits = [
+            ProposalKit(
+                name="Kit Solar 2,75 kWp",
+                description="Kit demonstrativo para leads de baixo consumo.",
+                min_monthly_consumption_kwh=250,
+                max_monthly_consumption_kwh=340,
+                min_power_kwp=2.1,
+                max_power_kwp=2.9,
+                suggested_power_kwp=2.75,
+                estimated_monthly_generation_kwh=313,
+                module_count=5,
+                module_power_wp=550,
+                inverter_power_kw=3,
+                base_price=0,
+                sort_order=10,
+                notes="Valor base zerado. Substitua por preco revisado pela Solar Solucoes.",
+            ),
+            ProposalKit(
+                name="Kit Solar 3,30 kWp",
+                description="Kit demonstrativo para consumo residencial intermediario.",
+                min_monthly_consumption_kwh=341,
+                max_monthly_consumption_kwh=430,
+                min_power_kwp=2.91,
+                max_power_kwp=3.6,
+                suggested_power_kwp=3.3,
+                estimated_monthly_generation_kwh=390,
+                module_count=6,
+                module_power_wp=550,
+                inverter_power_kw=4,
+                base_price=0,
+                sort_order=20,
+                notes="Valor base zerado. Substitua por preco revisado pela Solar Solucoes.",
+            ),
+            ProposalKit(
+                name="Kit Solar 4,40 kWp",
+                description="Kit demonstrativo para consumo residencial/comercial medio.",
+                min_monthly_consumption_kwh=431,
+                max_monthly_consumption_kwh=570,
+                min_power_kwp=3.61,
+                max_power_kwp=4.8,
+                suggested_power_kwp=4.4,
+                estimated_monthly_generation_kwh=520,
+                module_count=8,
+                module_power_wp=550,
+                inverter_power_kw=5,
+                base_price=0,
+                sort_order=30,
+                notes="Valor base zerado. Substitua por preco revisado pela Solar Solucoes.",
+            ),
+            ProposalKit(
+                name="Kit Solar 5,50 kWp",
+                description="Kit demonstrativo para consumo maior e pre-propostas robustas.",
+                min_monthly_consumption_kwh=571,
+                max_monthly_consumption_kwh=710,
+                min_power_kwp=4.81,
+                max_power_kwp=6.0,
+                suggested_power_kwp=5.5,
+                estimated_monthly_generation_kwh=650,
+                module_count=10,
+                module_power_wp=550,
+                inverter_power_kw=5,
+                base_price=0,
+                sort_order=40,
+                notes="Valor base zerado. Substitua por preco revisado pela Solar Solucoes.",
+            ),
+        ]
+        for seed_kit in seed_kits:
+            kit = db.scalar(select(ProposalKit).where(ProposalKit.name == seed_kit.name))
+            if not kit:
+                db.add(seed_kit)
         db.commit()
     finally:
         db.close()

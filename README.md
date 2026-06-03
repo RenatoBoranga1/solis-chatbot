@@ -22,6 +22,7 @@ O projeto esta organizado como um monorepo simples:
 - Tabela de precos configuravel para propostas e PDF comercial com visual premium.
 - Transferencia para humano em casos graves, complexos, comerciais estrategicos ou sem resposta confiavel.
 - Base de conhecimento administravel e pronta para RAG.
+- Kits fotovoltaicos configuraveis com simulador e selecao automatica para pre-propostas revisaveis.
 - Base multimidia com videos oficiais, PDFs, manuais e links de apoio seguros.
 - Registro de perguntas sem resposta.
 - Painel com dashboard, conversas, leads, chamados e artigos.
@@ -148,6 +149,16 @@ Propostas:
 - `PUT /proposal-price-items/{id}`
 - `PATCH /proposal-price-items/{id}/active`
 - `DELETE /proposal-price-items/{id}`
+- `GET /proposal-kits`
+- `POST /proposal-kits`
+- `POST /proposal-kits/simulate`
+- `GET /proposal-kits/{id}`
+- `PUT /proposal-kits/{id}`
+- `PATCH /proposal-kits/{id}/active`
+- `DELETE /proposal-kits/{id}`
+- `POST /proposal-kits/{id}/items`
+- `PUT /proposal-kits/{id}/items/{item_id}`
+- `DELETE /proposal-kits/{id}/items/{item_id}`
 
 Tickets:
 
@@ -353,10 +364,28 @@ Pontos importantes:
 
 Guia completo: [`docs/proposals.md`](docs/proposals.md).
 
+### Kits fotovoltaicos configuraveis
+
+A aba `Kits fotovoltaicos` permite cadastrar kits comerciais com faixas de consumo, faixas de potencia, potencia sugerida, geracao estimada, modulos, inversor, preco base e itens detalhados. Ao gerar proposta a partir de lead, o backend calcula potencia/geracao estimadas e tenta selecionar automaticamente o kit ativo mais adequado.
+
+Ordem de selecao:
+
+- faixa de potencia estimada;
+- faixa de geracao/consumo mensal;
+- kit imediatamente acima da potencia estimada;
+- maior kit ativo;
+- fallback para tabela de precos ou itens padrao zerados quando nao houver kit.
+
+Exemplo: com conta media de R$ 350,00, o simulador estima aproximadamente 313 kWh/mes e 2,32 kWp. Se houver um kit ativo com faixa compativel, ele aparece como `kit recomendado`, mas a proposta permanece `draft` e deve ser revisada por humano antes de qualquer envio.
+
+Guia completo: [`docs/proposal-kits.md`](docs/proposal-kits.md).
+
 ### Evolucao profissional de propostas
 
 - A aba `Tabela de precos` permite cadastrar itens base por categoria, quantidade, unidade e valor unitario.
+- A aba `Kits fotovoltaicos` permite simular e montar pre-propostas com kit recomendado.
 - Propostas geradas por lead usam a tabela ativa quando existir; se nao houver tabela, os itens entram zerados para revisao manual.
+- Quando ha kit recomendado, o PDF e a tela da proposta exibem nome do kit, potencia, modulos, inversor, geracao estimada, motivo da selecao e aviso de revisao tecnica/comercial.
 - O bot e a IA nao definem preco final sozinhos.
 - O botao `Aplicar tabela de precos` recalcula uma proposta existente com os itens ativos configurados.
 - O PDF premium usa dados da empresa, capa visual, resumo tecnico, tabela de itens, resumo financeiro, avisos comerciais e rodape.
@@ -388,7 +417,7 @@ cd backend
 python -m unittest discover tests
 ```
 
-Os testes cobrem classificacao de intencao, gravidade, validacao do webhook, assinatura da Meta, deduplicacao, anexos, auditoria `WebhookEvent`, continuidade site -> WhatsApp, propostas comerciais, tabela de precos, link seguro, resposta digital, follow-ups, configuracoes comerciais e falhas de envio.
+Os testes cobrem classificacao de intencao, gravidade, validacao do webhook, assinatura da Meta, deduplicacao, anexos, auditoria `WebhookEvent`, continuidade site -> WhatsApp, propostas comerciais, kits fotovoltaicos, tabela de precos, link seguro, resposta digital, follow-ups, configuracoes comerciais e falhas de envio.
 
 ## Deploy sugerido
 

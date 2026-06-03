@@ -18,6 +18,7 @@ from app.models import (
     ProposalEvent,
     ProposalFollowUp,
     ProposalItem,
+    ProposalKit,
     ProposalPriceItem,
     ProposalShareLink,
     User,
@@ -37,6 +38,7 @@ from app.schemas import (
     ProposalUpdate,
 )
 from app.services.email import EmailService
+from app.services.proposal_kits import ProposalKitService
 from app.services.proposal_pdf import ProposalPdfService
 from app.services.whatsapp_cloud import WhatsAppCloudService
 
@@ -91,6 +93,7 @@ class ProposalService:
                 selectinload(Proposal.events),
                 selectinload(Proposal.followups),
                 selectinload(Proposal.customer_responses),
+                selectinload(Proposal.recommended_kit),
             )
             .order_by(desc(Proposal.created_at))
             .limit(300)
@@ -129,11 +132,30 @@ class ProposalService:
         power_kwp, generation_kwh = self._estimate_system(average_bill)
         missing = self._missing_lead_data(lead, customer, collected)
         active_price_items = self._active_price_items()
+        kit_selection = ProposalKitService(self.db).simulate_selection(
+            average_bill=average_bill,
+            estimated_monthly_generation_kwh=generation_kwh,
+            estimated_power_kwp=power_kwp,
+        )
+        selected_kit = kit_selection.selected_kit
+        proposal_power_kwp = float(selected_kit.suggested_power_kwp) if selected_kit else power_kwp
+        proposal_generation_kwh = (
+            float(selected_kit.estimated_monthly_generation_kwh)
+            if selected_kit and selected_kit.estimated_monthly_generation_kwh is not None
+            else generation_kwh
+        )
         company_settings = self.get_company_settings()
         internal_notes = DEFAULT_PROPOSAL_NOTICE
         if missing:
             internal_notes += f" Dados faltantes: {', '.join(missing)}."
-        if active_price_items:
+        if selected_kit:
+            internal_notes += (
+                " Kit recomendado automaticamente com base na conta media/consumo informado. "
+                "Revise dimensionamento, telhado, concessionaria, padrao de entrada, sombreamento, estrutura e condicoes comerciais antes de enviar."
+            )
+            if kit_selection.selection_reason:
+                internal_notes += f" Motivo da selecao: {kit_selection.selection_reason}"
+        elif active_price_items:
             internal_notes += " Valores carregados da tabela de precos configuravel. Revise antes de enviar."
         else:
             internal_notes += (
@@ -153,9 +175,12 @@ class ProposalService:
             state=state,
             property_type=lead.property_type or collected.get("property_type"),
             average_bill=average_bill,
-            estimated_system_power_kwp=power_kwp,
-            estimated_monthly_generation_kwh=generation_kwh,
+            estimated_system_power_kwp=proposal_power_kwp,
+            estimated_monthly_generation_kwh=proposal_generation_kwh,
             estimated_savings_percentage=85 if average_bill else None,
+            recommended_kit_id=selected_kit.id if selected_kit else None,
+            recommended_kit_name=selected_kit.name if selected_kit else None,
+            kit_selection_reason=kit_selection.selection_reason if selected_kit else None,
             validity_days=company_settings.default_proposal_validity_days,
             notes=company_settings.default_proposal_notes or DEFAULT_PROPOSAL_NOTICE,
             internal_notes=internal_notes,
@@ -164,7 +189,10 @@ class ProposalService:
         )
         self.db.add(proposal)
         self.db.flush()
-        if active_price_items:
+        if selected_kit:
+            self._apply_kit_to_proposal(proposal, selected_kit)
+            self._apply_optional_price_items_to_proposal(proposal, active_price_items)
+        elif active_price_items:
             self._apply_price_items_to_proposal(proposal, active_price_items)
         else:
             for index, (category, description) in enumerate(DEFAULT_ITEMS):
@@ -181,8 +209,11 @@ class ProposalService:
                     index,
                 )
         self.recalculate(proposal)
-        self._audit("proposal.created", proposal, {"origin": "lead", "lead_id": lead.id})
-        self._record_event(proposal, "proposal.created", details={"origin": "lead", "lead_id": lead.id})
+        audit_details = {"origin": "lead", "lead_id": lead.id}
+        if selected_kit:
+            audit_details.update({"recommended_kit_id": selected_kit.id, "recommended_kit_name": selected_kit.name})
+        self._audit("proposal.created", proposal, audit_details)
+        self._record_event(proposal, "proposal.created", details=audit_details)
         self.db.commit()
         self.db.refresh(proposal)
         return proposal
@@ -197,6 +228,7 @@ class ProposalService:
                 selectinload(Proposal.events),
                 selectinload(Proposal.followups),
                 selectinload(Proposal.customer_responses),
+                selectinload(Proposal.recommended_kit),
             )
         )
         if not proposal:
@@ -606,6 +638,62 @@ class ProposalService:
                 ),
                 index,
             )
+
+    def _apply_kit_to_proposal(self, proposal: Proposal, kit: ProposalKit) -> None:
+        kit_items = list(kit.items or [])
+        if kit_items:
+            for index, kit_item in enumerate(kit_items):
+                self._add_item_object(
+                    proposal,
+                    ProposalItemCreate(
+                        category=kit_item.category,
+                        description=kit_item.description,
+                        quantity=float(kit_item.quantity or 0),
+                        unit=kit_item.unit,
+                        unit_price=float(kit_item.unit_price or 0),
+                        sort_order=kit_item.sort_order if kit_item.sort_order is not None else index,
+                    ),
+                    index,
+                )
+            return
+
+        description = kit.name
+        if kit.description:
+            description = f"{kit.name} - {kit.description}"
+        self._add_item_object(
+            proposal,
+            ProposalItemCreate(
+                category="kit_fotovoltaico",
+                description=description,
+                quantity=1,
+                unit="kit",
+                unit_price=float(kit.base_price or 0),
+                sort_order=0,
+            ),
+            0,
+        )
+
+    def _apply_optional_price_items_to_proposal(self, proposal: Proposal, price_items: list[ProposalPriceItem]) -> None:
+        optional_categories = {"projeto", "homologacao", "mao_de_obra", "deslocamento", "monitoramento"}
+        existing_categories = {item.category for item in (proposal.items or [])}
+        start_index = len(proposal.items or [])
+        for price_item in price_items:
+            if price_item.category not in optional_categories or price_item.category in existing_categories:
+                continue
+            self._add_item_object(
+                proposal,
+                ProposalItemCreate(
+                    category=price_item.category,
+                    description=price_item.description,
+                    quantity=float(price_item.default_quantity or 0),
+                    unit=price_item.default_unit,
+                    unit_price=float(price_item.default_unit_price or 0),
+                    sort_order=start_index,
+                ),
+                start_index,
+            )
+            existing_categories.add(price_item.category)
+            start_index += 1
 
     def _audit(self, action: str, proposal: Proposal, details: dict | None = None) -> None:
         self.db.add(

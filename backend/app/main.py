@@ -11,6 +11,7 @@ from app.api import (
     routes_dashboard,
     routes_knowledge,
     routes_leads,
+    routes_proposal_kits,
     routes_proposals,
     routes_tickets,
     routes_whatsapp,
@@ -67,6 +68,7 @@ app.include_router(routes_proposals.router)
 app.include_router(routes_proposals.price_router)
 app.include_router(routes_proposals.company_router)
 app.include_router(routes_proposals.public_router)
+app.include_router(routes_proposal_kits.router)
 app.include_router(routes_tickets.router)
 app.include_router(routes_knowledge.router)
 app.include_router(routes_dashboard.router)

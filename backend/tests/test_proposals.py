@@ -19,6 +19,8 @@ from app.models import (
     ProposalEvent,
     ProposalFollowUp,
     ProposalItem,
+    ProposalKit,
+    ProposalKitItem,
     ProposalPriceItem,
     ProposalShareLink,
     User,
@@ -30,12 +32,17 @@ from app.schemas import (
     ProposalFollowUpCreate,
     ProposalItemCreate,
     ProposalItemUpdate,
+    ProposalKitCreate,
+    ProposalKitItemCreate,
+    ProposalKitItemUpdate,
+    ProposalKitUpdate,
     ProposalPriceItemCreate,
     ProposalPriceItemUpdate,
     ProposalShareLinkCreate,
     ProposalSendRequest,
     ProposalUpdate,
 )
+from app.services.proposal_kits import ProposalKitService
 from app.services.proposals import ProposalService
 
 
@@ -48,10 +55,11 @@ class FakeScalarResult:
 
 
 class FakeDb:
-    def __init__(self, objects=None, scalar_queue=None, scalar_items=None):
+    def __init__(self, objects=None, scalar_queue=None, scalar_items=None, scalars_queue=None):
         self.objects = objects or {}
         self.scalar_queue = list(scalar_queue or [])
         self.scalar_items = list(scalar_items or [])
+        self.scalars_queue = [list(items) for items in (scalars_queue or [])]
         self.added = []
         self.deleted = []
         self.commits = 0
@@ -65,6 +73,8 @@ class FakeDb:
         return None
 
     def scalars(self, _statement):
+        if self.scalars_queue:
+            return FakeScalarResult(self.scalars_queue.pop(0))
         return FakeScalarResult(self.scalar_items)
 
     def add(self, obj):
@@ -202,6 +212,43 @@ def price_item_fixture() -> ProposalPriceItem:
     )
 
 
+def kit_fixture() -> ProposalKit:
+    kit = ProposalKit(
+        id="kit-1",
+        name="Kit Solar 2,75 kWp",
+        description="Kit residencial demonstrativo",
+        min_monthly_consumption_kwh=250,
+        max_monthly_consumption_kwh=340,
+        min_power_kwp=2.0,
+        max_power_kwp=2.9,
+        suggested_power_kwp=2.75,
+        estimated_monthly_generation_kwh=313,
+        module_count=5,
+        module_power_wp=550,
+        inverter_power_kw=3,
+        base_price=14500,
+        active=True,
+        sort_order=0,
+        notes="Revisar antes de enviar.",
+        created_at=utc_now(),
+    )
+    kit.items = [
+        ProposalKitItem(
+            id="kit-item-1",
+            kit_id=kit.id,
+            category="kit_fotovoltaico",
+            description="Modulo, inversor e estrutura do kit 2,75 kWp",
+            quantity=1,
+            unit="kit",
+            unit_price=14500,
+            total_price=14500,
+            sort_order=0,
+            created_at=utc_now(),
+        )
+    ]
+    return kit
+
+
 def company_settings_fixture() -> CompanySettings:
     return CompanySettings(
         id="company-1",
@@ -231,6 +278,101 @@ def share_link_fixture(proposal: Proposal) -> ProposalShareLink:
         created_by="user-admin",
         created_at=utc_now(),
     )
+
+
+class ProposalKitServiceTest(unittest.TestCase):
+    def test_create_edit_toggle_and_item_crud(self):
+        db = FakeDb()
+        service = ProposalKitService(db, admin_user())
+
+        created = service.create_kit(
+            ProposalKitCreate(
+                name="Kit Solar 3,30 kWp",
+                description="Kit demonstrativo",
+                min_monthly_consumption_kwh=341,
+                max_monthly_consumption_kwh=430,
+                suggested_power_kwp=3.3,
+                module_count=6,
+                module_power_wp=550,
+                inverter_power_kw=4,
+                base_price=0,
+                items=[
+                    ProposalKitItemCreate(
+                        category="kit_fotovoltaico",
+                        description="Kit detalhado",
+                        quantity=1,
+                        unit="kit",
+                        unit_price=1000,
+                    )
+                ],
+            )
+        )
+
+        self.assertEqual(created.name, "Kit Solar 3,30 kWp")
+        self.assertEqual(len(created.items), 1)
+        self.assertTrue([item for item in db.added if isinstance(item, AuditLog)])
+
+        db.scalar_queue = [created, created, created, created, created]
+        updated = service.update_kit(created.id, ProposalKitUpdate(base_price=1200))
+        self.assertEqual(updated.base_price, 1200)
+
+        inactive = service.set_active(created.id, False)
+        self.assertFalse(inactive.active)
+
+        added_item_kit = service.create_item(
+            created.id,
+            ProposalKitItemCreate(category="homologacao", description="Homologacao", quantity=1, unit="servico", unit_price=0),
+        )
+        self.assertEqual(len(added_item_kit.items), 2)
+
+        item = next(existing for existing in added_item_kit.items if existing.category == "homologacao")
+        item.id = item.id or "kit-item-added"
+        changed = service.update_item(created.id, item.id, ProposalKitItemUpdate(quantity=2, unit_price=250))
+        self.assertTrue(any(float(existing.total_price or 0) == 500 for existing in changed.items))
+
+        after_delete = service.delete_item(created.id, item.id)
+        self.assertEqual(len(after_delete.items), 1)
+
+    def test_selects_kit_by_power_consumption_and_above(self):
+        small = kit_fixture()
+        medium = kit_fixture()
+        medium.id = "kit-2"
+        medium.name = "Kit Solar 4,40 kWp"
+        medium.min_power_kwp = 3.5
+        medium.max_power_kwp = 4.8
+        medium.min_monthly_consumption_kwh = 431
+        medium.max_monthly_consumption_kwh = 570
+        medium.suggested_power_kwp = 4.4
+
+        selected, reason = ProposalKitService(FakeDb(scalars_queue=[[small, medium]])).select_best_kit(
+            estimated_power_kwp=2.32,
+            estimated_monthly_generation_kwh=313,
+        )
+        self.assertEqual(selected.id, small.id)
+        self.assertIn("potencia", reason)
+
+        selected, reason = ProposalKitService(FakeDb(scalars_queue=[[small, medium]])).select_best_kit(
+            estimated_power_kwp=None,
+            estimated_monthly_generation_kwh=500,
+        )
+        self.assertEqual(selected.id, medium.id)
+        self.assertIn("geracao", reason)
+
+        selected, reason = ProposalKitService(FakeDb(scalars_queue=[[small, medium]])).select_best_kit(
+            estimated_power_kwp=3.0,
+            estimated_monthly_generation_kwh=390,
+        )
+        self.assertEqual(selected.id, medium.id)
+        self.assertIn("imediatamente acima", reason)
+
+    def test_simulation_does_not_commit(self):
+        kit = kit_fixture()
+        db = FakeDb(scalars_queue=[[kit]])
+
+        result = ProposalKitService(db).simulate_selection(average_bill=350)
+
+        self.assertEqual(result.selected_kit.id, kit.id)
+        self.assertEqual(db.commits, 0)
 
 
 class ProposalServiceTest(unittest.TestCase):
@@ -278,7 +420,7 @@ class ProposalServiceTest(unittest.TestCase):
         price_item = price_item_fixture()
         db = FakeDb(
             objects={(Lead, lead.id): lead, (Customer, customer.id): customer, (Conversation, conversation.id): conversation},
-            scalar_items=[price_item],
+            scalars_queue=[[price_item], []],
         )
 
         proposal = ProposalService(db, admin_user()).create_from_lead(lead.id)
@@ -287,6 +429,25 @@ class ProposalServiceTest(unittest.TestCase):
         self.assertEqual(proposal.items[0].description, price_item.description)
         self.assertEqual(proposal.total_amount, 12000)
         self.assertIn("tabela de precos", proposal.internal_notes.lower())
+
+    def test_create_from_lead_uses_recommended_kit_items(self):
+        customer = customer_fixture()
+        lead = lead_fixture(customer)
+        conversation = conversation_fixture(customer)
+        kit = kit_fixture()
+        db = FakeDb(
+            objects={(Lead, lead.id): lead, (Customer, customer.id): customer, (Conversation, conversation.id): conversation},
+            scalars_queue=[[], [kit]],
+        )
+
+        proposal = ProposalService(db, admin_user()).create_from_lead(lead.id)
+
+        self.assertEqual(proposal.status, "draft")
+        self.assertEqual(proposal.recommended_kit_id, kit.id)
+        self.assertEqual(proposal.recommended_kit_name, kit.name)
+        self.assertEqual(proposal.items[0].description, kit.items[0].description)
+        self.assertEqual(proposal.total_amount, 14500)
+        self.assertIn("Kit recomendado automaticamente", proposal.internal_notes)
 
     def test_update_item_and_discount_recalculate_total(self):
         proposal = proposal_fixture()
@@ -322,6 +483,29 @@ class ProposalServiceTest(unittest.TestCase):
                 self.assertEqual(result.status, "ready")
                 self.assertEqual(result.channel, "manual")
                 self.assertEqual(proposal.status, "ready_to_send")
+            finally:
+                settings.proposal_storage_path = original_storage
+
+    def test_pdf_includes_recommended_kit_section(self):
+        proposal = proposal_fixture()
+        kit = kit_fixture()
+        proposal.recommended_kit_id = kit.id
+        proposal.recommended_kit_name = kit.name
+        proposal.kit_selection_reason = "Kit escolhido por faixa de potencia estimada."
+        proposal.recommended_kit = kit
+        with tempfile.TemporaryDirectory() as tmpdir:
+            original_storage = settings.proposal_storage_path
+            settings.proposal_storage_path = tmpdir
+            try:
+                db = FakeDb(scalar_queue=[proposal, None])
+                service = ProposalService(db, admin_user())
+
+                updated = service.generate_pdf(proposal.id)
+
+                with open(updated.pdf_url, "rb") as pdf_file:
+                    content = pdf_file.read()
+                self.assertIn(b"Kit fotovoltaico recomendado", content)
+                self.assertIn(b"Kit Solar 2,75 kWp", content)
             finally:
                 settings.proposal_storage_path = original_storage
 
@@ -510,6 +694,27 @@ class ProposalRoutesPermissionTest(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 403)
+
+    def test_support_cannot_manage_proposal_kits(self):
+        app.dependency_overrides[get_current_user] = support_user
+
+        response = self.client.post(
+            "/proposal-kits",
+            json={"name": "Kit Solar", "suggested_power_kwp": 2.75, "base_price": 0},
+        )
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_admin_can_simulate_proposal_kit(self):
+        app.dependency_overrides[get_current_user] = admin_user
+        self.db.scalars_queue = [[kit_fixture()]]
+
+        response = self.client.post("/proposal-kits/simulate", json={"average_bill": 350})
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["selected_kit"]["name"], "Kit Solar 2,75 kWp")
+        self.assertGreater(data["estimated_power_kwp"], 0)
 
 
 if __name__ == "__main__":

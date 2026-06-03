@@ -43,6 +43,7 @@ class ProposalPdfService:
         y = self._draw_cover_header(page, proposal)
         y = self._draw_customer_block(page, proposal, y)
         y = self._draw_solution_block(page, proposal, y)
+        page, y = self._draw_recommended_kit_block(page, pages, proposal, y)
         page, y = self._draw_items_table(page, pages, proposal, y)
         page, y = self._draw_financial_block(page, pages, proposal, y)
         self._draw_notices(page, pages, proposal, y)
@@ -119,6 +120,29 @@ class ProposalPdfService:
             DARK_TEXT,
         )
         return y - 132
+
+    def _draw_recommended_kit_block(self, page: PdfPage, pages: list[PdfPage], proposal: Proposal, y: int) -> tuple[PdfPage, int]:
+        if not proposal.recommended_kit_name:
+            return page, y
+
+        page, y = self._ensure_space(page, pages, y, 122)
+        self._section_title(page, "Kit fotovoltaico recomendado", y)
+        kit = proposal.recommended_kit
+        values = [
+            ("Kit", proposal.recommended_kit_name),
+            ("Potencia sugerida", self._measurement(kit.suggested_power_kwp if kit else proposal.estimated_system_power_kwp, "kWp")),
+            ("Modulos", self._kit_modules_label(kit)),
+            ("Inversor", self._measurement(kit.inverter_power_kw if kit else None, "kW")),
+            ("Geracao mensal", self._measurement(kit.estimated_monthly_generation_kwh if kit else proposal.estimated_monthly_generation_kwh, "kWh")),
+            ("Motivo", proposal.kit_selection_reason or "Selecao automatica a revisar."),
+        ]
+        self._key_value_grid(page, values, y - 28)
+        notice = (
+            "O kit recomendado foi selecionado automaticamente com base nos dados informados e deve ser validado "
+            "pela equipe tecnica/comercial da Solar Solucoes antes do envio ao cliente."
+        )
+        self._wrapped_text(page, notice, MARGIN_X + 18, y - 122, 92, 8, "F1", MUTED_TEXT)
+        return page, y - 156
 
     def _draw_items_table(self, page: PdfPage, pages: list[PdfPage], proposal: Proposal, y: int) -> tuple[PdfPage, int]:
         page, y = self._ensure_space(page, pages, y, 110)
@@ -370,6 +394,20 @@ class ProposalPdfService:
             "outros": "Outros",
         }
         return labels.get(category, category)
+
+    @staticmethod
+    def _kit_modules_label(kit: object | None) -> str:
+        if not kit:
+            return "A validar"
+        count = getattr(kit, "module_count", None)
+        power = getattr(kit, "module_power_wp", None)
+        if count and power:
+            return f"{count} x {power} Wp"
+        if count:
+            return f"{count} modulos"
+        if power:
+            return f"Modulo {power} Wp"
+        return "A validar"
 
     def _company_name(self) -> str:
         return (self.company_settings.company_name if self.company_settings else None) or settings.company_name

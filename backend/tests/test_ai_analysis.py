@@ -6,13 +6,14 @@ from app.api.deps import get_current_user
 from app.core.config import settings
 from app.db.session import get_db
 from app.main import app
-from app.models import AIAnalysis, AuditLog, Conversation, Lead, Message, Ticket, User, utc_now
+from app.models import AIAnalysis, AuditLog, Conversation, Lead, Message, Proposal, Ticket, User, utc_now
 from app.services.ai_analysis import AIAnalysisService
 
 
 class FakeDb:
-    def __init__(self, objects: dict[tuple[type, str], object] | None = None) -> None:
+    def __init__(self, objects: dict[tuple[type, str], object] | None = None, scalar_queue: list[object | None] | None = None) -> None:
         self.objects = objects or {}
+        self.scalar_queue = list(scalar_queue or [])
         self.added = []
         self.commits = 0
 
@@ -20,6 +21,8 @@ class FakeDb:
         return self.objects.get((model, item_id))
 
     def scalar(self, _statement):
+        if self.scalar_queue:
+            return self.scalar_queue.pop(0)
         return None
 
     def scalars(self, _statement):
@@ -107,6 +110,27 @@ def critical_ticket_fixture() -> Ticket:
     )
 
 
+def proposal_with_kit_fixture(lead: Lead) -> Proposal:
+    return Proposal(
+        id="proposal-1",
+        customer_id=lead.customer_id,
+        lead_id=lead.id,
+        conversation_id=lead.conversation_id,
+        proposal_number="SOL-20260603-KIT",
+        status="draft",
+        customer_name="Cliente Lead",
+        recommended_kit_id="kit-1",
+        recommended_kit_name="Kit Solar 2,75 kWp",
+        kit_selection_reason="Kit escolhido por faixa de potencia estimada.",
+        estimated_system_power_kwp=2.75,
+        estimated_monthly_generation_kwh=313,
+        subtotal=0,
+        discount=0,
+        total_amount=0,
+        validity_days=7,
+    )
+
+
 class AIAnalysisServiceTest(unittest.TestCase):
     def setUp(self) -> None:
         self.original_enable_ai = settings.enable_generative_ai
@@ -169,6 +193,16 @@ class AIAnalysisServiceTest(unittest.TestCase):
         analysis = AIAnalysisService(db).analyze_lead(lead.id)
 
         self.assertEqual(analysis.raw_analysis["mode"], "rules")
+
+    def test_lead_analysis_mentions_recommended_kit(self):
+        lead = hot_lead_fixture()
+        proposal = proposal_with_kit_fixture(lead)
+        db = FakeDb({(Lead, lead.id): lead}, scalar_queue=[proposal])
+
+        analysis = AIAnalysisService(db).analyze_lead(lead.id)
+
+        self.assertIn("Kit Solar 2,75 kWp", analysis.recommended_next_action)
+        self.assertIn("kit_recomendado", analysis.tags)
 
 
 class AIAnalysisRoutesTest(unittest.TestCase):

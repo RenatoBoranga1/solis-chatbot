@@ -537,6 +537,12 @@ input:disabled {
 .proposal-grid input,
 .proposal-item-row input,
 .proposal-item-row select,
+.kit-form input,
+.kit-form select,
+.kit-edit-grid input,
+.kit-item-row input,
+.kit-item-row select,
+.kit-simulator input,
 .proposal-followup-form input,
 .proposal-followup-form select,
 .company-settings-grid input,
@@ -570,6 +576,7 @@ input:disabled {
 .proposal-section-actions {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 10px;
 }
 
@@ -604,6 +611,114 @@ input:disabled {
 .proposal-alert--warning {
   color: #7b5607;
   background: #fff3cf;
+}
+
+.kit-recommendation-card,
+.kit-simulator,
+.kit-card {
+  display: grid;
+  gap: 12px;
+  border: 1px solid #dbe3ed;
+  border-radius: 8px;
+  padding: 14px;
+  background: #fbfcfe;
+}
+
+.kit-recommendation-card p,
+.kit-simulator small,
+.kit-card p {
+  margin: 0;
+  color: #526274;
+  line-height: 1.45;
+}
+
+.kit-panel,
+.kit-list,
+.kit-edit-area,
+.kit-items {
+  display: grid;
+  gap: 14px;
+}
+
+.kit-form {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(130px, 1fr));
+  gap: 10px;
+  border: 1px solid #dbe3ed;
+  border-radius: 8px;
+  padding: 14px;
+  background: #ffffff;
+}
+
+.kit-form strong,
+.kit-simulator strong,
+.kit-items > strong {
+  align-self: center;
+}
+
+.kit-simulator form {
+  display: grid;
+  grid-template-columns: 1fr 220px 220px;
+  align-items: end;
+  gap: 10px;
+}
+
+.kit-simulation-result,
+.kit-summary-grid,
+.kit-edit-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.kit-simulation-result {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.kit-summary-grid {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+
+.kit-summary-grid span,
+.kit-simulation-result span {
+  display: grid;
+  gap: 3px;
+  border: 1px solid #e4eaf1;
+  border-radius: 6px;
+  padding: 9px;
+  background: #ffffff;
+}
+
+.kit-summary-grid small {
+  color: #687789;
+}
+
+.kit-card__header {
+  display: grid;
+  grid-template-columns: 92px minmax(180px, 1fr) 92px 90px 42px;
+  align-items: center;
+  gap: 10px;
+}
+
+.kit-card__header input {
+  min-height: 38px;
+  border: 1px solid #ccd6e2;
+  border-radius: 6px;
+  padding: 0 10px;
+}
+
+.kit-edit-grid {
+  grid-template-columns: repeat(4, minmax(120px, 1fr));
+}
+
+.kit-item-row {
+  display: grid;
+  grid-template-columns: 160px 1fr 82px 82px 118px 100px 42px;
+  align-items: center;
+  gap: 8px;
+}
+
+.kit-item-row--new {
+  grid-template-columns: 160px 1fr 82px 82px 118px 90px 90px;
 }
 
 .proposal-detail__header,

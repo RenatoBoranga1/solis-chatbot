@@ -34,6 +34,9 @@ import type {
   Lead,
   Proposal,
   ProposalFollowUp,
+  ProposalKit,
+  ProposalKitItem,
+  ProposalKitSimulation,
   ProposalPriceItem,
   ProposalShareLink,
   ProposalSendRequest,
@@ -48,6 +51,7 @@ type AdminData = {
   proposals: Proposal[];
   proposalFollowups: ProposalFollowUp[];
   proposalPriceItems: ProposalPriceItem[];
+  proposalKits: ProposalKit[];
   companySettings: CompanySettings | null;
   tickets: Ticket[];
   knowledge: KnowledgeArticle[];
@@ -61,6 +65,7 @@ const emptyData: AdminData = {
   proposals: [],
   proposalFollowups: [],
   proposalPriceItems: [],
+  proposalKits: [],
   companySettings: null,
   tickets: [],
   knowledge: [],
@@ -114,6 +119,7 @@ export function AdminDashboard() {
           proposals,
           proposalFollowups,
           proposalPriceItems,
+          proposalKits,
           companySettings,
           tickets,
           knowledge,
@@ -125,11 +131,12 @@ export function AdminDashboard() {
           adminApi.proposals(currentToken),
           adminApi.proposalFollowups(currentToken),
           adminApi.proposalPriceItems(currentToken),
+          adminApi.proposalKits(currentToken),
           adminApi.companySettings(currentToken),
           adminApi.tickets(currentToken),
           adminApi.knowledge(currentToken),
         ]);
-        setData({ metrics, aiInsights, conversations, leads, proposals, proposalFollowups, proposalPriceItems, companySettings, tickets, knowledge });
+        setData({ metrics, aiInsights, conversations, leads, proposals, proposalFollowups, proposalPriceItems, proposalKits, companySettings, tickets, knowledge });
       } catch (loadError) {
         setError("NÃ£o foi possÃ­vel carregar o painel. Verifique o login e a API.");
       } finally {
@@ -446,6 +453,53 @@ export function AdminDashboard() {
     await loadData();
   }
 
+  async function handleCreateProposalKit(payload: Partial<ProposalKit>) {
+    if (!token) return;
+    await adminApi.createProposalKit(token, payload);
+    await loadData();
+  }
+
+  async function handleUpdateProposalKit(id: string, payload: Partial<ProposalKit>) {
+    if (!token) return;
+    await adminApi.updateProposalKit(token, id, payload);
+    await loadData();
+  }
+
+  async function handleToggleProposalKit(id: string, active: boolean) {
+    if (!token) return;
+    await adminApi.updateProposalKitActive(token, id, active);
+    await loadData();
+  }
+
+  async function handleDeleteProposalKit(id: string) {
+    if (!token) return;
+    await adminApi.deleteProposalKit(token, id);
+    await loadData();
+  }
+
+  async function handleAddProposalKitItem(kitId: string, payload: Partial<ProposalKitItem>) {
+    if (!token) return;
+    await adminApi.addProposalKitItem(token, kitId, payload);
+    await loadData();
+  }
+
+  async function handleUpdateProposalKitItem(kitId: string, itemId: string, payload: Partial<ProposalKitItem>) {
+    if (!token) return;
+    await adminApi.updateProposalKitItem(token, kitId, itemId, payload);
+    await loadData();
+  }
+
+  async function handleDeleteProposalKitItem(kitId: string, itemId: string) {
+    if (!token) return;
+    await adminApi.deleteProposalKitItem(token, kitId, itemId);
+    await loadData();
+  }
+
+  async function handleSimulateProposalKit(payload: { average_bill?: number | null; estimated_monthly_generation_kwh?: number | null; estimated_power_kwp?: number | null }) {
+    if (!token) return null;
+    return adminApi.simulateProposalKit(token, payload);
+  }
+
   function copySuggestedReply(text: string) {
     void navigator.clipboard?.writeText(text);
   }
@@ -555,6 +609,7 @@ export function AdminDashboard() {
             proposals={data.proposals}
             followups={data.proposalFollowups}
             priceItems={data.proposalPriceItems}
+            kits={data.proposalKits}
             companySettings={data.companySettings}
             selectedProposal={selectedProposal}
             loadingKey={proposalLoadingKey}
@@ -577,6 +632,14 @@ export function AdminDashboard() {
             onUpdatePriceItem={handleUpdatePriceItem}
             onTogglePriceItem={handleTogglePriceItem}
             onDeletePriceItem={handleDeletePriceItem}
+            onCreateKit={handleCreateProposalKit}
+            onUpdateKit={handleUpdateProposalKit}
+            onToggleKit={handleToggleProposalKit}
+            onDeleteKit={handleDeleteProposalKit}
+            onAddKitItem={handleAddProposalKitItem}
+            onUpdateKitItem={handleUpdateProposalKitItem}
+            onDeleteKitItem={handleDeleteProposalKitItem}
+            onSimulateKit={handleSimulateProposalKit}
             onUpdateCompanySettings={handleUpdateCompanySettings}
           />
         )}
@@ -670,6 +733,36 @@ const PROPOSAL_ITEM_CATEGORIES = [
 
 function formatCurrency(value: number | null | undefined) {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(value ?? 0));
+}
+
+function formatMeasurement(value: number | null | undefined, unit: string, digits = 2) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return "A validar";
+  return `${new Intl.NumberFormat("pt-BR", { maximumFractionDigits: digits }).format(Number(value))} ${unit}`;
+}
+
+function numberOrNull(value: string | number | null | undefined) {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function numberOrZero(value: string | number | null | undefined) {
+  return numberOrNull(value) ?? 0;
+}
+
+function integerOrNull(value: string | number | null | undefined) {
+  const parsed = numberOrNull(value);
+  return parsed === null ? null : Math.round(parsed);
+}
+
+function integerOrZero(value: string | number | null | undefined) {
+  return integerOrNull(value) ?? 0;
+}
+
+function rangeLabel(min: number | null | undefined, max: number | null | undefined, unit: string, digits = 2) {
+  const left = min === null || min === undefined ? "min livre" : formatMeasurement(min, unit, digits);
+  const right = max === null || max === undefined ? "max livre" : formatMeasurement(max, unit, digits);
+  return `${left} a ${right}`;
 }
 
 function formatDateTime(value: string | null | undefined) {
@@ -1079,6 +1172,7 @@ function ProposalsView({
   proposals,
   followups,
   priceItems,
+  kits,
   companySettings,
   selectedProposal,
   loadingKey,
@@ -1101,11 +1195,20 @@ function ProposalsView({
   onUpdatePriceItem,
   onTogglePriceItem,
   onDeletePriceItem,
+  onCreateKit,
+  onUpdateKit,
+  onToggleKit,
+  onDeleteKit,
+  onAddKitItem,
+  onUpdateKitItem,
+  onDeleteKitItem,
+  onSimulateKit,
   onUpdateCompanySettings,
 }: {
   proposals: Proposal[];
   followups: ProposalFollowUp[];
   priceItems: ProposalPriceItem[];
+  kits: ProposalKit[];
   companySettings: CompanySettings | null;
   selectedProposal: Proposal | null;
   loadingKey: string | null;
@@ -1128,10 +1231,18 @@ function ProposalsView({
   onUpdatePriceItem: (id: string, payload: Partial<ProposalPriceItem>) => Promise<void>;
   onTogglePriceItem: (id: string, active: boolean) => Promise<void>;
   onDeletePriceItem: (id: string) => Promise<void>;
+  onCreateKit: (payload: Partial<ProposalKit>) => Promise<void>;
+  onUpdateKit: (id: string, payload: Partial<ProposalKit>) => Promise<void>;
+  onToggleKit: (id: string, active: boolean) => Promise<void>;
+  onDeleteKit: (id: string) => Promise<void>;
+  onAddKitItem: (kitId: string, payload: Partial<ProposalKitItem>) => Promise<void>;
+  onUpdateKitItem: (kitId: string, itemId: string, payload: Partial<ProposalKitItem>) => Promise<void>;
+  onDeleteKitItem: (kitId: string, itemId: string) => Promise<void>;
+  onSimulateKit: (payload: { average_bill?: number | null; estimated_monthly_generation_kwh?: number | null; estimated_power_kwp?: number | null }) => Promise<ProposalKitSimulation | null>;
   onUpdateCompanySettings: (payload: Partial<CompanySettings>) => Promise<void>;
 }) {
   const [filters, setFilters] = useState({ status: "", city: "", customer: "" });
-  const [activeTab, setActiveTab] = useState<"proposals" | "prices" | "followups" | "settings">("proposals");
+  const [activeTab, setActiveTab] = useState<"proposals" | "kits" | "prices" | "followups" | "settings">("proposals");
   const [sendDraft, setSendDraft] = useState<ProposalSendRequest>({ channel: "manual", mark_as_sent: false });
   const [followupDraft, setFollowupDraft] = useState({ channel: "manual", due_at: "", note: "Retorno comercial da proposta" });
   const filtered = proposals.filter((proposal) => {
@@ -1151,6 +1262,9 @@ function ProposalsView({
         <button className={activeTab === "proposals" ? "proposal-tab proposal-tab--active" : "proposal-tab"} onClick={() => setActiveTab("proposals")}>
           Propostas
         </button>
+        <button className={activeTab === "kits" ? "proposal-tab proposal-tab--active" : "proposal-tab"} onClick={() => setActiveTab("kits")}>
+          Kits fotovoltaicos
+        </button>
         <button className={activeTab === "prices" ? "proposal-tab proposal-tab--active" : "proposal-tab"} onClick={() => setActiveTab("prices")}>
           Tabela de precos
         </button>
@@ -1161,6 +1275,20 @@ function ProposalsView({
           Configuracoes comerciais
         </button>
       </div>
+
+      {activeTab === "kits" && (
+        <ProposalKitsPanel
+          kits={kits}
+          onCreate={onCreateKit}
+          onUpdate={onUpdateKit}
+          onToggle={onToggleKit}
+          onDelete={onDeleteKit}
+          onAddItem={onAddKitItem}
+          onUpdateItem={onUpdateKitItem}
+          onDeleteItem={onDeleteKitItem}
+          onSimulate={onSimulateKit}
+        />
+      )}
 
       {activeTab === "prices" && (
         <PriceTablePanel
@@ -1246,6 +1374,7 @@ function ProposalsView({
               Os valores ainda nao foram preenchidos. Configure a tabela de precos ou edite os itens manualmente.
             </div>
           )}
+          {selectedProposal.recommended_kit_name && <KitRecommendationCard proposal={selectedProposal} />}
 
           <div className="proposal-grid">
             <label>
@@ -1507,6 +1636,276 @@ function ProposalsView({
         </>
       )}
     </section>
+  );
+}
+
+function KitRecommendationCard({ proposal }: { proposal: Proposal }) {
+  const kit = proposal.recommended_kit;
+  return (
+    <section className="kit-recommendation-card">
+      <div className="proposal-section-title">
+        <strong>Kit recomendado automaticamente</strong>
+        <span>{proposal.recommended_kit_name}</span>
+      </div>
+      <div className="kit-summary-grid">
+        <span>
+          <small>Potencia sugerida</small>
+          <strong>{formatMeasurement(kit?.suggested_power_kwp ?? proposal.estimated_system_power_kwp, "kWp", 3)}</strong>
+        </span>
+        <span>
+          <small>Modulos</small>
+          <strong>{kit?.module_count ? `${kit.module_count} x ${kit.module_power_wp ?? "?"} Wp` : "A validar"}</strong>
+        </span>
+        <span>
+          <small>Inversor</small>
+          <strong>{formatMeasurement(kit?.inverter_power_kw, "kW", 3)}</strong>
+        </span>
+        <span>
+          <small>Geracao estimada</small>
+          <strong>{formatMeasurement(kit?.estimated_monthly_generation_kwh ?? proposal.estimated_monthly_generation_kwh, "kWh/mes", 0)}</strong>
+        </span>
+      </div>
+      <p>{proposal.kit_selection_reason ?? "Kit sugerido pelo sistema com base nos dados informados."}</p>
+      <div className="proposal-alert proposal-alert--warning">
+        Este kit foi sugerido automaticamente com base na conta media informada pelo cliente. Revise dimensionamento, telhado,
+        concessionaria, padrao de entrada, sombreamento, estrutura e condicoes comerciais antes de enviar.
+      </div>
+    </section>
+  );
+}
+
+const emptyKitDraft = {
+  name: "",
+  description: "",
+  min_monthly_consumption_kwh: "",
+  max_monthly_consumption_kwh: "",
+  min_power_kwp: "",
+  max_power_kwp: "",
+  suggested_power_kwp: "",
+  estimated_monthly_generation_kwh: "",
+  module_count: "",
+  module_power_wp: "",
+  inverter_power_kw: "",
+  base_price: "0",
+  sort_order: "0",
+  notes: "",
+  active: true,
+};
+
+const emptyKitItemDraft = {
+  category: "kit_fotovoltaico",
+  description: "",
+  quantity: "1",
+  unit: "un",
+  unit_price: "0",
+  sort_order: "0",
+};
+
+function ProposalKitsPanel({
+  kits,
+  onCreate,
+  onUpdate,
+  onToggle,
+  onDelete,
+  onAddItem,
+  onUpdateItem,
+  onDeleteItem,
+  onSimulate,
+}: {
+  kits: ProposalKit[];
+  onCreate: (payload: Partial<ProposalKit>) => Promise<void>;
+  onUpdate: (id: string, payload: Partial<ProposalKit>) => Promise<void>;
+  onToggle: (id: string, active: boolean) => Promise<void>;
+  onDelete: (id: string) => Promise<void>;
+  onAddItem: (kitId: string, payload: Partial<ProposalKitItem>) => Promise<void>;
+  onUpdateItem: (kitId: string, itemId: string, payload: Partial<ProposalKitItem>) => Promise<void>;
+  onDeleteItem: (kitId: string, itemId: string) => Promise<void>;
+  onSimulate: (payload: { average_bill?: number | null; estimated_monthly_generation_kwh?: number | null; estimated_power_kwp?: number | null }) => Promise<ProposalKitSimulation | null>;
+}) {
+  const [draft, setDraft] = useState(emptyKitDraft);
+  const [expandedKitId, setExpandedKitId] = useState<string | null>(kits[0]?.id ?? null);
+  const [itemDrafts, setItemDrafts] = useState<Record<string, typeof emptyKitItemDraft>>({});
+  const [simulationBill, setSimulationBill] = useState("350");
+  const [simulation, setSimulation] = useState<ProposalKitSimulation | null>(null);
+
+  async function submitKit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!draft.name.trim() || !draft.suggested_power_kwp.trim()) return;
+    await onCreate({
+      name: draft.name.trim(),
+      description: draft.description || null,
+      min_monthly_consumption_kwh: numberOrNull(draft.min_monthly_consumption_kwh),
+      max_monthly_consumption_kwh: numberOrNull(draft.max_monthly_consumption_kwh),
+      min_power_kwp: numberOrNull(draft.min_power_kwp),
+      max_power_kwp: numberOrNull(draft.max_power_kwp),
+      suggested_power_kwp: numberOrZero(draft.suggested_power_kwp),
+      estimated_monthly_generation_kwh: numberOrNull(draft.estimated_monthly_generation_kwh),
+      module_count: integerOrNull(draft.module_count),
+      module_power_wp: integerOrNull(draft.module_power_wp),
+      inverter_power_kw: numberOrNull(draft.inverter_power_kw),
+      base_price: numberOrZero(draft.base_price),
+      active: draft.active,
+      sort_order: integerOrZero(draft.sort_order),
+      notes: draft.notes || null,
+    });
+    setDraft(emptyKitDraft);
+  }
+
+  async function simulate(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const result = await onSimulate({ average_bill: numberOrNull(simulationBill) });
+    setSimulation(result);
+  }
+
+  async function addItem(kitId: string) {
+    const itemDraft = itemDrafts[kitId] ?? emptyKitItemDraft;
+    if (!itemDraft.description.trim()) return;
+    await onAddItem(kitId, {
+      category: itemDraft.category,
+      description: itemDraft.description,
+      quantity: numberOrZero(itemDraft.quantity),
+      unit: itemDraft.unit || "un",
+      unit_price: numberOrZero(itemDraft.unit_price),
+      sort_order: integerOrZero(itemDraft.sort_order),
+    });
+    setItemDrafts((current) => ({ ...current, [kitId]: emptyKitItemDraft }));
+  }
+
+  return (
+    <div className="kit-panel">
+      <form className="kit-form" onSubmit={submitKit}>
+        <strong>Novo kit fotovoltaico</strong>
+        <input placeholder="Nome do kit" value={draft.name} onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))} />
+        <input placeholder="Descricao" value={draft.description} onChange={(event) => setDraft((current) => ({ ...current, description: event.target.value }))} />
+        <input placeholder="Consumo minimo kWh/mes" value={draft.min_monthly_consumption_kwh} onChange={(event) => setDraft((current) => ({ ...current, min_monthly_consumption_kwh: event.target.value }))} />
+        <input placeholder="Consumo maximo kWh/mes" value={draft.max_monthly_consumption_kwh} onChange={(event) => setDraft((current) => ({ ...current, max_monthly_consumption_kwh: event.target.value }))} />
+        <input placeholder="Potencia minima kWp" value={draft.min_power_kwp} onChange={(event) => setDraft((current) => ({ ...current, min_power_kwp: event.target.value }))} />
+        <input placeholder="Potencia maxima kWp" value={draft.max_power_kwp} onChange={(event) => setDraft((current) => ({ ...current, max_power_kwp: event.target.value }))} />
+        <input placeholder="Potencia sugerida kWp" value={draft.suggested_power_kwp} onChange={(event) => setDraft((current) => ({ ...current, suggested_power_kwp: event.target.value }))} />
+        <input placeholder="Geracao mensal estimada" value={draft.estimated_monthly_generation_kwh} onChange={(event) => setDraft((current) => ({ ...current, estimated_monthly_generation_kwh: event.target.value }))} />
+        <input placeholder="Quantidade de modulos" value={draft.module_count} onChange={(event) => setDraft((current) => ({ ...current, module_count: event.target.value }))} />
+        <input placeholder="Potencia modulo Wp" value={draft.module_power_wp} onChange={(event) => setDraft((current) => ({ ...current, module_power_wp: event.target.value }))} />
+        <input placeholder="Inversor kW" value={draft.inverter_power_kw} onChange={(event) => setDraft((current) => ({ ...current, inverter_power_kw: event.target.value }))} />
+        <input placeholder="Preco base" value={draft.base_price} onChange={(event) => setDraft((current) => ({ ...current, base_price: event.target.value }))} />
+        <input placeholder="Ordem" value={draft.sort_order} onChange={(event) => setDraft((current) => ({ ...current, sort_order: event.target.value }))} />
+        <input placeholder="Observacoes" value={draft.notes} onChange={(event) => setDraft((current) => ({ ...current, notes: event.target.value }))} />
+        <label className="proposal-checkbox">
+          <input type="checkbox" checked={draft.active} onChange={(event) => setDraft((current) => ({ ...current, active: event.target.checked }))} />
+          Ativo
+        </label>
+        <button className="primary-button" type="submit">
+          <Plus size={16} />
+          Criar kit
+        </button>
+      </form>
+
+      <section className="kit-simulator">
+        <form onSubmit={simulate}>
+          <strong>Simulador de kit recomendado</strong>
+          <input value={simulationBill} onChange={(event) => setSimulationBill(event.target.value)} placeholder="Conta media mensal em R$" />
+          <button className="secondary-button" type="submit">
+            <Sparkles size={16} />
+            Simular kit recomendado
+          </button>
+        </form>
+        {simulation && (
+          <div className="kit-simulation-result">
+            <span>Geracao estimada: <strong>{formatMeasurement(simulation.estimated_monthly_generation_kwh, "kWh/mes", 0)}</strong></span>
+            <span>Potencia estimada: <strong>{formatMeasurement(simulation.estimated_power_kwp, "kWp", 3)}</strong></span>
+            <span>Kit recomendado: <strong>{simulation.selected_kit?.name ?? "Nenhum kit ativo encontrado"}</strong></span>
+            <span>Motivo: <strong>{simulation.selection_reason ?? "Sem selecao"}</strong></span>
+            {simulation.selected_kit && <span>Preco base: <strong>{formatCurrency(simulation.selected_kit.base_price)}</strong></span>}
+            <small>Simulacao sujeita a revisao tecnica e comercial.</small>
+          </div>
+        )}
+      </section>
+
+      <div className="kit-list">
+        {kits.map((kit) => {
+          const itemDraft = itemDrafts[kit.id] ?? emptyKitItemDraft;
+          return (
+            <article className="kit-card" key={kit.id}>
+              <div className="kit-card__header">
+                <button className="text-button" type="button" onClick={() => setExpandedKitId(expandedKitId === kit.id ? null : kit.id)}>
+                  {expandedKitId === kit.id ? "Ocultar" : "Detalhar"}
+                </button>
+                <input defaultValue={kit.name} onBlur={(event) => onUpdate(kit.id, { name: event.target.value })} />
+                <span className={kit.active ? "status-badge status-badge--open" : "status-badge"}>{kit.active ? "Ativo" : "Inativo"}</span>
+                <button className="text-button" type="button" onClick={() => onToggle(kit.id, !kit.active)}>
+                  {kit.active ? "Inativar" : "Ativar"}
+                </button>
+                <button className="icon-button" type="button" onClick={() => onDelete(kit.id)} aria-label="Excluir kit">
+                  <Trash2 size={15} />
+                </button>
+              </div>
+              <div className="kit-summary-grid">
+                <span><small>Consumo</small><strong>{rangeLabel(kit.min_monthly_consumption_kwh, kit.max_monthly_consumption_kwh, "kWh/mes", 0)}</strong></span>
+                <span><small>Potencia</small><strong>{rangeLabel(kit.min_power_kwp, kit.max_power_kwp, "kWp", 3)}</strong></span>
+                <span><small>Sugerida</small><strong>{formatMeasurement(kit.suggested_power_kwp, "kWp", 3)}</strong></span>
+                <span><small>Modulos</small><strong>{kit.module_count ? `${kit.module_count} x ${kit.module_power_wp ?? "?"} Wp` : "A validar"}</strong></span>
+                <span><small>Inversor</small><strong>{formatMeasurement(kit.inverter_power_kw, "kW", 3)}</strong></span>
+                <span><small>Preco base</small><strong>{formatCurrency(kit.base_price)}</strong></span>
+              </div>
+              {expandedKitId === kit.id && (
+                <div className="kit-edit-area">
+                  <div className="kit-edit-grid">
+                    <input placeholder="Descricao" defaultValue={kit.description ?? ""} onBlur={(event) => onUpdate(kit.id, { description: event.target.value || null })} />
+                    <input placeholder="Consumo minimo" defaultValue={kit.min_monthly_consumption_kwh ?? ""} onBlur={(event) => onUpdate(kit.id, { min_monthly_consumption_kwh: numberOrNull(event.target.value) })} />
+                    <input placeholder="Consumo maximo" defaultValue={kit.max_monthly_consumption_kwh ?? ""} onBlur={(event) => onUpdate(kit.id, { max_monthly_consumption_kwh: numberOrNull(event.target.value) })} />
+                    <input placeholder="Potencia minima" defaultValue={kit.min_power_kwp ?? ""} onBlur={(event) => onUpdate(kit.id, { min_power_kwp: numberOrNull(event.target.value) })} />
+                    <input placeholder="Potencia maxima" defaultValue={kit.max_power_kwp ?? ""} onBlur={(event) => onUpdate(kit.id, { max_power_kwp: numberOrNull(event.target.value) })} />
+                    <input placeholder="Potencia sugerida" defaultValue={kit.suggested_power_kwp} onBlur={(event) => onUpdate(kit.id, { suggested_power_kwp: numberOrZero(event.target.value) })} />
+                    <input placeholder="Geracao estimada" defaultValue={kit.estimated_monthly_generation_kwh ?? ""} onBlur={(event) => onUpdate(kit.id, { estimated_monthly_generation_kwh: numberOrNull(event.target.value) })} />
+                    <input placeholder="Modulos" defaultValue={kit.module_count ?? ""} onBlur={(event) => onUpdate(kit.id, { module_count: integerOrNull(event.target.value) })} />
+                    <input placeholder="Modulo Wp" defaultValue={kit.module_power_wp ?? ""} onBlur={(event) => onUpdate(kit.id, { module_power_wp: integerOrNull(event.target.value) })} />
+                    <input placeholder="Inversor kW" defaultValue={kit.inverter_power_kw ?? ""} onBlur={(event) => onUpdate(kit.id, { inverter_power_kw: numberOrNull(event.target.value) })} />
+                    <input placeholder="Preco base" defaultValue={kit.base_price} onBlur={(event) => onUpdate(kit.id, { base_price: numberOrZero(event.target.value) })} />
+                    <input placeholder="Ordem" defaultValue={kit.sort_order} onBlur={(event) => onUpdate(kit.id, { sort_order: integerOrZero(event.target.value) })} />
+                    <input placeholder="Observacoes" defaultValue={kit.notes ?? ""} onBlur={(event) => onUpdate(kit.id, { notes: event.target.value || null })} />
+                  </div>
+                  <div className="kit-items">
+                    <strong>Itens do kit</strong>
+                    {kit.items.map((item) => (
+                      <div className="kit-item-row" key={item.id}>
+                        <select defaultValue={item.category} onBlur={(event) => onUpdateItem(kit.id, item.id, { category: event.target.value })}>
+                          {PROPOSAL_ITEM_CATEGORIES.map((category) => (
+                            <option key={category.value} value={category.value}>{category.label}</option>
+                          ))}
+                        </select>
+                        <input defaultValue={item.description} onBlur={(event) => onUpdateItem(kit.id, item.id, { description: event.target.value })} />
+                        <input defaultValue={item.quantity} onBlur={(event) => onUpdateItem(kit.id, item.id, { quantity: numberOrZero(event.target.value) })} />
+                        <input defaultValue={item.unit} onBlur={(event) => onUpdateItem(kit.id, item.id, { unit: event.target.value })} />
+                        <input defaultValue={item.unit_price} onBlur={(event) => onUpdateItem(kit.id, item.id, { unit_price: numberOrZero(event.target.value) })} />
+                        <strong>{formatCurrency(item.total_price)}</strong>
+                        <button className="icon-button" type="button" onClick={() => onDeleteItem(kit.id, item.id)} aria-label="Excluir item do kit">
+                          <Trash2 size={15} />
+                        </button>
+                      </div>
+                    ))}
+                    <div className="kit-item-row kit-item-row--new">
+                      <select value={itemDraft.category} onChange={(event) => setItemDrafts((current) => ({ ...current, [kit.id]: { ...itemDraft, category: event.target.value } }))}>
+                        {PROPOSAL_ITEM_CATEGORIES.map((category) => (
+                          <option key={category.value} value={category.value}>{category.label}</option>
+                        ))}
+                      </select>
+                      <input placeholder="Descricao" value={itemDraft.description} onChange={(event) => setItemDrafts((current) => ({ ...current, [kit.id]: { ...itemDraft, description: event.target.value } }))} />
+                      <input placeholder="Qtd" value={itemDraft.quantity} onChange={(event) => setItemDrafts((current) => ({ ...current, [kit.id]: { ...itemDraft, quantity: event.target.value } }))} />
+                      <input placeholder="Un" value={itemDraft.unit} onChange={(event) => setItemDrafts((current) => ({ ...current, [kit.id]: { ...itemDraft, unit: event.target.value } }))} />
+                      <input placeholder="Unitario" value={itemDraft.unit_price} onChange={(event) => setItemDrafts((current) => ({ ...current, [kit.id]: { ...itemDraft, unit_price: event.target.value } }))} />
+                      <input placeholder="Ordem" value={itemDraft.sort_order} onChange={(event) => setItemDrafts((current) => ({ ...current, [kit.id]: { ...itemDraft, sort_order: event.target.value } }))} />
+                      <button className="text-button" type="button" onClick={() => addItem(kit.id)}>
+                        <Plus size={15} />
+                        Item
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </article>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 

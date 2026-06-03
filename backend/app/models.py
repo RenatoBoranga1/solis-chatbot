@@ -255,6 +255,9 @@ class Proposal(Base, TimestampMixin):
     estimated_system_power_kwp: Mapped[float | None] = mapped_column(Numeric(12, 3))
     estimated_monthly_generation_kwh: Mapped[float | None] = mapped_column(Numeric(12, 2))
     estimated_savings_percentage: Mapped[float | None] = mapped_column(Numeric(5, 2))
+    recommended_kit_id: Mapped[str | None] = mapped_column(ForeignKey("proposal_kits.id"), index=True)
+    recommended_kit_name: Mapped[str | None] = mapped_column(String(180))
+    kit_selection_reason: Mapped[str | None] = mapped_column(Text)
     validity_days: Mapped[int] = mapped_column(Integer, default=7, nullable=False)
     notes: Mapped[str | None] = mapped_column(Text)
     internal_notes: Mapped[str | None] = mapped_column(Text)
@@ -267,6 +270,7 @@ class Proposal(Base, TimestampMixin):
     customer: Mapped[Customer | None] = relationship(back_populates="proposals")
     lead: Mapped[Lead | None] = relationship(back_populates="proposals")
     conversation: Mapped[Conversation | None] = relationship()
+    recommended_kit: Mapped["ProposalKit | None"] = relationship()
     items: Mapped[list["ProposalItem"]] = relationship(
         back_populates="proposal",
         cascade="all, delete-orphan",
@@ -307,6 +311,49 @@ class ProposalPriceItem(Base, TimestampMixin):
     active: Mapped[bool] = mapped_column(Boolean, default=True, index=True, nullable=False)
     sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     notes: Mapped[str | None] = mapped_column(Text)
+
+
+class ProposalKit(Base, TimestampMixin):
+    __tablename__ = "proposal_kits"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    name: Mapped[str] = mapped_column(String(180), unique=True, index=True, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    min_monthly_consumption_kwh: Mapped[float | None] = mapped_column(Numeric(12, 2), index=True)
+    max_monthly_consumption_kwh: Mapped[float | None] = mapped_column(Numeric(12, 2), index=True)
+    min_power_kwp: Mapped[float | None] = mapped_column(Numeric(12, 3), index=True)
+    max_power_kwp: Mapped[float | None] = mapped_column(Numeric(12, 3), index=True)
+    suggested_power_kwp: Mapped[float] = mapped_column(Numeric(12, 3), index=True, nullable=False)
+    estimated_monthly_generation_kwh: Mapped[float | None] = mapped_column(Numeric(12, 2))
+    module_count: Mapped[int | None] = mapped_column(Integer)
+    module_power_wp: Mapped[int | None] = mapped_column(Integer)
+    inverter_power_kw: Mapped[float | None] = mapped_column(Numeric(12, 3))
+    base_price: Mapped[float] = mapped_column(Numeric(12, 2), default=0, nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, index=True, nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text)
+
+    items: Mapped[list["ProposalKitItem"]] = relationship(
+        back_populates="kit",
+        cascade="all, delete-orphan",
+        order_by="ProposalKitItem.sort_order",
+    )
+
+
+class ProposalKitItem(Base, TimestampMixin):
+    __tablename__ = "proposal_kit_items"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    kit_id: Mapped[str] = mapped_column(ForeignKey("proposal_kits.id"), index=True, nullable=False)
+    category: Mapped[str] = mapped_column(String(80), index=True, nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    quantity: Mapped[float] = mapped_column(Numeric(12, 3), default=1, nullable=False)
+    unit: Mapped[str] = mapped_column(String(40), default="un", nullable=False)
+    unit_price: Mapped[float] = mapped_column(Numeric(12, 2), default=0, nullable=False)
+    total_price: Mapped[float] = mapped_column(Numeric(12, 2), default=0, nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    kit: Mapped[ProposalKit] = relationship(back_populates="items")
 
 
 class ProposalShareLink(Base, TimestampMixin):

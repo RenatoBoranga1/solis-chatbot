@@ -11,6 +11,9 @@ import type {
   Proposal,
   ProposalCustomerResponse,
   ProposalFollowUp,
+  ProposalKit,
+  ProposalKitItem,
+  ProposalKitSimulation,
   ProposalPriceItem,
   ProposalShareLink,
   ProposalSendRequest,
@@ -173,6 +176,7 @@ export const adminApi = {
   proposals: (token: string) => adminFetch<Proposal[]>("/proposals", token),
   proposalFollowups: (token: string) => adminFetch<ProposalFollowUp[]>("/proposals/followups", token),
   proposalPriceItems: (token: string) => adminFetch<ProposalPriceItem[]>("/proposal-price-items", token),
+  proposalKits: (token: string) => adminFetch<ProposalKit[]>("/proposal-kits", token),
   companySettings: (token: string) => adminFetch<CompanySettings>("/company-settings", token),
   knowledge: (token: string) => adminFetch<KnowledgeArticle[]>("/knowledge", token),
   createProposal: (token: string, payload: Partial<Proposal>) =>
@@ -223,6 +227,25 @@ export const adminApi = {
     }),
   deleteProposalPriceItem: (token: string, id: string) =>
     adminFetch<void>(`/proposal-price-items/${id}`, token, { method: "DELETE" }),
+  createProposalKit: (token: string, payload: Partial<ProposalKit>) =>
+    adminFetch<ProposalKit>("/proposal-kits", token, { method: "POST", body: JSON.stringify(payload) }),
+  updateProposalKit: (token: string, id: string, payload: Partial<ProposalKit>) =>
+    adminFetch<ProposalKit>(`/proposal-kits/${id}`, token, { method: "PUT", body: JSON.stringify(payload) }),
+  updateProposalKitActive: (token: string, id: string, active: boolean) =>
+    adminFetch<ProposalKit>(`/proposal-kits/${id}/active`, token, {
+      method: "PATCH",
+      body: JSON.stringify({ active }),
+    }),
+  deleteProposalKit: (token: string, id: string) =>
+    adminFetch<void>(`/proposal-kits/${id}`, token, { method: "DELETE" }),
+  addProposalKitItem: (token: string, kitId: string, payload: Partial<ProposalKitItem>) =>
+    adminFetch<ProposalKit>(`/proposal-kits/${kitId}/items`, token, { method: "POST", body: JSON.stringify(payload) }),
+  updateProposalKitItem: (token: string, kitId: string, itemId: string, payload: Partial<ProposalKitItem>) =>
+    adminFetch<ProposalKit>(`/proposal-kits/${kitId}/items/${itemId}`, token, { method: "PUT", body: JSON.stringify(payload) }),
+  deleteProposalKitItem: (token: string, kitId: string, itemId: string) =>
+    adminFetch<ProposalKit>(`/proposal-kits/${kitId}/items/${itemId}`, token, { method: "DELETE" }),
+  simulateProposalKit: (token: string, payload: { average_bill?: number | null; estimated_monthly_generation_kwh?: number | null; estimated_power_kwp?: number | null }) =>
+    adminFetch<ProposalKitSimulation>("/proposal-kits/simulate", token, { method: "POST", body: JSON.stringify(payload) }),
   updateCompanySettings: (token: string, payload: Partial<CompanySettings>) =>
     adminFetch<CompanySettings>("/company-settings", token, { method: "PUT", body: JSON.stringify(payload) }),
   createKnowledge: (token: string, payload: Omit<KnowledgeArticle, "id" | "created_at">) =>
