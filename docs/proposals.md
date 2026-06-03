@@ -13,6 +13,9 @@ A area `Propostas` transforma leads captados pelo Solis em rascunhos comerciais 
 7. A equipe revisa dados tecnicos, itens, valores, desconto, validade e condicoes.
 8. A equipe gera o PDF premium.
 9. A equipe escolhe o canal de envio: manual, WhatsApp, e-mail ou link seguro.
+10. O sistema gera um token seguro para a pagina `/proposta/{token}`.
+11. O cliente visualiza, baixa o PDF e registra interesse, aceite, recusa, pedido de ajuste ou pedido de consultor.
+12. A equipe acompanha a linha do tempo e os follow-ups comerciais no painel.
 
 ## Endpoints
 
@@ -29,6 +32,20 @@ DELETE /proposals/{proposal_id}/items/{item_id}
 POST /proposals/{proposal_id}/generate-pdf
 POST /proposals/{proposal_id}/apply-price-table
 POST /proposals/{proposal_id}/send
+POST /proposals/{proposal_id}/share-link
+GET /proposals/{proposal_id}/share-links
+PATCH /proposals/share-links/{link_id}/revoke
+GET /proposals/followups
+POST /proposals/{proposal_id}/followups
+PATCH /proposals/followups/{followup_id}/complete
+PATCH /proposals/followups/{followup_id}/cancel
+
+GET /public/proposals/{token}
+POST /public/proposals/{token}/responses
+GET /public/proposals/{token}/pdf
+
+GET /company-settings
+PUT /company-settings
 
 GET /proposal-price-items
 POST /proposal-price-items
@@ -37,7 +54,7 @@ PATCH /proposal-price-items/{id}/active
 DELETE /proposal-price-items/{id}
 ```
 
-Visualizacao e permitida para perfis internos. Criacao, edicao, PDF, envio e gestao da tabela de precos sao restritos a `admin`, `comercial` e `gestor`.
+Visualizacao e permitida para perfis internos. Criacao, edicao, PDF, envio, follow-ups, links seguros, configuracoes comerciais e gestao da tabela de precos sao restritos a `admin`, `comercial` e `gestor`. As rotas `/public/proposals/{token}` sao publicas, mas exigem token valido, nao revogado e nao expirado.
 
 ## Status
 
@@ -119,6 +136,21 @@ COMPANY_SECONDARY_COLOR=#0B1F33
 
 O PDF continua sendo salvo em `PROPOSAL_STORAGE_PATH`. Em producao, recomenda-se storage privado com URL temporaria.
 
+## Configuracoes comerciais
+
+A tabela `company_settings` centraliza dados usados em propostas e PDFs:
+
+- nome, telefone, e-mail, site e endereco da empresa;
+- URL de logotipo;
+- cores principal e secundaria;
+- validade padrao da proposta;
+- condicoes de pagamento padrao;
+- observacoes comerciais padrao.
+
+Esses dados podem ser editados no painel pela aba `Configuracoes comerciais`, para perfis `admin` e `gestor`. Se ainda nao existir registro salvo, o backend cria um fallback usando as variaveis `COMPANY_NAME`, `COMPANY_PHONE`, `COMPANY_EMAIL`, `COMPANY_WEBSITE`, `COMPANY_ADDRESS`, `COMPANY_LOGO_PATH`, `COMPANY_PRIMARY_COLOR` e `COMPANY_SECONDARY_COLOR`.
+
+Em producao, configure `FRONTEND_ORIGINS` com o dominio publico do frontend. O link de proposta usa o primeiro dominio configurado para gerar `/proposta/{token}`.
+
 ## Envio da proposta
 
 Endpoint:
@@ -144,17 +176,11 @@ Payload:
 Canais:
 
 - `manual`: gera o PDF e deixa pronto para envio humano. Nao marca como `sent`, salvo com `mark_as_sent=true`.
-- `whatsapp`: simula em `development`; em `production`, usa `WhatsAppCloudService`.
-- `email`: simula em `development`; em `production`, usa SMTP.
-- `secure_link`: retorna uma URL publica segura quando `PROPOSAL_PUBLIC_BASE_URL` estiver configurado.
+- `whatsapp`: gera link seguro, simula em `development`; em `production`, usa `WhatsAppCloudService`.
+- `email`: gera link seguro, simula em `development`; em `production`, usa SMTP.
+- `secure_link`: gera ou reaproveita um link seguro ativo para compartilhamento humano.
 
-Para WhatsApp ou link seguro, configure:
-
-```env
-PROPOSAL_PUBLIC_BASE_URL=https://seu-dominio-seguro.com/proposals
-```
-
-Sem essa URL, o sistema nao envia caminho local do PDF para o cliente.
+O sistema nunca envia caminho local do PDF ao cliente. WhatsApp, e-mail e link seguro usam a pagina publica `/proposta/{token}`. O download do PDF passa por `GET /public/proposals/{token}/pdf`, que valida token, expiracao e revogacao antes de servir o arquivo.
 
 Para e-mail em producao:
 
@@ -169,6 +195,89 @@ SMTP_USE_TLS=true
 ```
 
 Mensagens ativas no WhatsApp fora da janela de 24 horas exigem template aprovado pela Meta.
+
+## Link seguro e pagina publica
+
+Cada link seguro fica em `proposal_share_links` com:
+
+- token aleatorio;
+- data de expiracao;
+- data de revogacao;
+- quantidade de visualizacoes;
+- ultima visualizacao;
+- usuario que criou o link.
+
+Endpoints:
+
+```text
+POST /proposals/{proposal_id}/share-link
+GET /proposals/{proposal_id}/share-links
+PATCH /proposals/share-links/{link_id}/revoke
+GET /public/proposals/{token}
+GET /public/proposals/{token}/pdf
+```
+
+A pagina publica do frontend fica em:
+
+```text
+https://seu-dominio.com/proposta/{token}
+```
+
+Ela mostra resumo da proposta, dados principais, itens, condicoes, total, download do PDF e botoes de resposta do cliente. Token expirado, revogado ou inexistente retorna mensagem de indisponibilidade.
+
+## Resposta digital do cliente
+
+O endpoint publico:
+
+```text
+POST /public/proposals/{token}/responses
+```
+
+Aceita:
+
+- `interested`;
+- `accepted`;
+- `rejected`;
+- `request_changes`;
+- `talk_to_consultant`.
+
+As respostas ficam em `proposal_customer_responses`. Quando o cliente aceita, a proposta passa para `accepted`. Quando recusa, passa para `rejected`. Quando solicita ajuste e a proposta estava enviada, volta para `under_review`. Cada resposta tambem gera evento em `proposal_events` e auditoria interna.
+
+## Follow-ups comerciais
+
+A tabela `proposal_followups` organiza retornos comerciais apos envio da proposta:
+
+- canal (`manual`, `whatsapp`, `email`, `phone`);
+- vencimento;
+- status (`pending`, `completed`, `canceled`);
+- observacao;
+- responsavel;
+- data de conclusao.
+
+Endpoints:
+
+```text
+GET /proposals/followups
+POST /proposals/{proposal_id}/followups
+PATCH /proposals/followups/{followup_id}/complete
+PATCH /proposals/followups/{followup_id}/cancel
+```
+
+Quando uma proposta e marcada como enviada ou simulada por WhatsApp/e-mail, o sistema cria retornos padrao de 24 horas e 3 dias, sem duplicar follow-ups pendentes do mesmo canal.
+
+## Linha do tempo
+
+Eventos comerciais sao registrados em `proposal_events` e aparecem no detalhe da proposta:
+
+- proposta criada ou atualizada;
+- PDF gerado;
+- link seguro criado, visto ou revogado;
+- proposta baixada;
+- proposta enviada;
+- resposta digital do cliente;
+- follow-up criado, concluido ou cancelado.
+
+Esses eventos ajudam auditoria, gestao comercial e rastreabilidade sem depender apenas de logs tecnicos.
 
 ## Auditoria
 
@@ -185,6 +294,13 @@ Acoes registradas em `audit_logs`:
 - `proposal.email_sent`;
 - `proposal.whatsapp_sent`;
 - `proposal.secure_link_generated`;
+- `proposal.share_link_created`;
+- `proposal.share_link_revoked`;
+- `proposal.customer_interested`;
+- `proposal.accepted`;
+- `proposal.rejected`;
+- `proposal.change_requested`;
+- `proposal.followup_created`;
 - `proposal_price_item.created`;
 - `proposal_price_item.updated`;
 - `proposal_price_item.active_changed`;

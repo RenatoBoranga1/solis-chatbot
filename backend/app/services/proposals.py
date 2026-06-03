@@ -1,18 +1,37 @@
 import uuid
-from datetime import datetime, timezone
+import secrets
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.config import settings
-from app.models import AuditLog, Conversation, Customer, Lead, Proposal, ProposalItem, ProposalPriceItem, User
+from app.models import (
+    AuditLog,
+    CompanySettings,
+    Conversation,
+    Customer,
+    Lead,
+    Proposal,
+    ProposalCustomerResponse,
+    ProposalEvent,
+    ProposalFollowUp,
+    ProposalItem,
+    ProposalPriceItem,
+    ProposalShareLink,
+    User,
+)
 from app.schemas import (
+    CompanySettingsIn,
     ProposalCreate,
+    ProposalCustomerResponseIn,
+    ProposalFollowUpCreate,
     ProposalItemCreate,
     ProposalItemUpdate,
     ProposalPriceItemCreate,
     ProposalPriceItemUpdate,
+    ProposalShareLinkCreate,
     ProposalSendRequest,
     ProposalSendResult,
     ProposalUpdate,
@@ -64,7 +83,18 @@ class ProposalService:
         self.whatsapp_service = WhatsAppCloudService()
 
     def list_proposals(self, status: str | None = None, city: str | None = None, customer: str | None = None) -> list[Proposal]:
-        statement = select(Proposal).options(selectinload(Proposal.items)).order_by(desc(Proposal.created_at)).limit(300)
+        statement = (
+            select(Proposal)
+            .options(
+                selectinload(Proposal.items),
+                selectinload(Proposal.share_links),
+                selectinload(Proposal.events),
+                selectinload(Proposal.followups),
+                selectinload(Proposal.customer_responses),
+            )
+            .order_by(desc(Proposal.created_at))
+            .limit(300)
+        )
         if status:
             statement = statement.where(Proposal.status == status)
         if city:
@@ -83,6 +113,7 @@ class ProposalService:
             self._add_item_object(proposal, item_payload, index)
         self.recalculate(proposal)
         self._audit("proposal.created", proposal)
+        self._record_event(proposal, "proposal.created")
         self.db.commit()
         self.db.refresh(proposal)
         return proposal
@@ -98,6 +129,7 @@ class ProposalService:
         power_kwp, generation_kwh = self._estimate_system(average_bill)
         missing = self._missing_lead_data(lead, customer, collected)
         active_price_items = self._active_price_items()
+        company_settings = self.get_company_settings()
         internal_notes = DEFAULT_PROPOSAL_NOTICE
         if missing:
             internal_notes += f" Dados faltantes: {', '.join(missing)}."
@@ -124,11 +156,11 @@ class ProposalService:
             estimated_system_power_kwp=power_kwp,
             estimated_monthly_generation_kwh=generation_kwh,
             estimated_savings_percentage=85 if average_bill else None,
-            validity_days=7,
-            notes=DEFAULT_PROPOSAL_NOTICE,
+            validity_days=company_settings.default_proposal_validity_days,
+            notes=company_settings.default_proposal_notes or DEFAULT_PROPOSAL_NOTICE,
             internal_notes=internal_notes,
             discount=0,
-            payment_conditions="A definir após revisão comercial.",
+            payment_conditions=company_settings.default_payment_conditions or "A definir apos revisao comercial.",
         )
         self.db.add(proposal)
         self.db.flush()
@@ -142,7 +174,7 @@ class ProposalService:
                         category=category,
                         description=description,
                         quantity=1,
-                    unit="serviço" if category in {"mao_de_obra", "projeto", "homologacao"} else "un",
+                        unit="servico" if category in {"mao_de_obra", "projeto", "homologacao"} else "un",
                         unit_price=0,
                         sort_order=index,
                     ),
@@ -150,13 +182,22 @@ class ProposalService:
                 )
         self.recalculate(proposal)
         self._audit("proposal.created", proposal, {"origin": "lead", "lead_id": lead.id})
+        self._record_event(proposal, "proposal.created", details={"origin": "lead", "lead_id": lead.id})
         self.db.commit()
         self.db.refresh(proposal)
         return proposal
 
     def get_proposal(self, proposal_id: str) -> Proposal:
         proposal = self.db.scalar(
-            select(Proposal).where(Proposal.id == proposal_id).options(selectinload(Proposal.items))
+            select(Proposal)
+            .where(Proposal.id == proposal_id)
+            .options(
+                selectinload(Proposal.items),
+                selectinload(Proposal.share_links),
+                selectinload(Proposal.events),
+                selectinload(Proposal.followups),
+                selectinload(Proposal.customer_responses),
+            )
         )
         if not proposal:
             raise ValueError("Proposal not found")
@@ -168,6 +209,7 @@ class ProposalService:
             setattr(proposal, field, value)
         self.recalculate(proposal)
         self._audit("proposal.updated", proposal)
+        self._record_event(proposal, "proposal.updated")
         self.db.commit()
         self.db.refresh(proposal)
         return proposal
@@ -176,6 +218,7 @@ class ProposalService:
         proposal = self.get_proposal(proposal_id)
         proposal.status = status
         self._audit("proposal.status_changed", proposal, {"status": status})
+        self._record_event(proposal, "proposal.updated", details={"status": status})
         self.db.commit()
         self.db.refresh(proposal)
         return proposal
@@ -215,10 +258,11 @@ class ProposalService:
     def generate_pdf(self, proposal_id: str) -> Proposal:
         proposal = self.get_proposal(proposal_id)
         self.recalculate(proposal)
-        proposal.pdf_url = self.pdf_service.generate(proposal)
+        proposal.pdf_url = self.pdf_service.generate(proposal, self.get_company_settings())
         if proposal.status in {"draft", "under_review", "approved"}:
             proposal.status = "ready_to_send"
         self._audit("proposal.pdf_generated", proposal, {"pdf_url": proposal.pdf_url})
+        self._record_event(proposal, "proposal.pdf_generated")
         self.db.commit()
         self.db.refresh(proposal)
         return proposal
@@ -226,7 +270,7 @@ class ProposalService:
     def send(self, proposal_id: str, payload: ProposalSendRequest) -> ProposalSendResult:
         proposal = self.get_proposal(proposal_id)
         if not proposal.pdf_url:
-            proposal.pdf_url = self.pdf_service.generate(proposal)
+            proposal.pdf_url = self.pdf_service.generate(proposal, self.get_company_settings())
         if proposal.status in {"draft", "under_review", "approved"}:
             proposal.status = "ready_to_send"
 
@@ -234,8 +278,11 @@ class ProposalService:
             if payload.mark_as_sent:
                 proposal.status = "sent"
                 self._audit("proposal.sent", proposal, {"channel": payload.channel, "manual_confirmation": True})
+                self._record_event(proposal, "proposal.sent", channel=payload.channel, details={"manual_confirmation": True})
+                self._create_default_followups(proposal, payload.channel)
             else:
                 self._audit("proposal.send_requested", proposal, {"channel": payload.channel})
+                self._record_event(proposal, "proposal.send_requested", channel=payload.channel)
             self.db.commit()
             return ProposalSendResult(
                 status="sent" if payload.mark_as_sent else "ready",
@@ -250,17 +297,10 @@ class ProposalService:
             )
 
         if payload.channel == "secure_link":
-            public_url = self._public_pdf_url(proposal)
-            if not public_url:
-                self._audit("proposal.send_failed", proposal, {"channel": payload.channel, "reason": "missing_public_pdf_url"})
-                self.db.commit()
-                return ProposalSendResult(
-                    status="error",
-                    channel=payload.channel,
-                    message="PDF gerado, mas nao ha URL publica segura configurada para envio.",
-                    pdf_url=proposal.pdf_url,
-                )
+            link = self._ensure_share_link(proposal)
+            public_url = self.public_url_for_share_link(link)
             self._audit("proposal.secure_link_generated", proposal, {"channel": payload.channel})
+            self._record_event(proposal, "proposal.secure_link_generated", channel=payload.channel, details={"share_link_id": link.id})
             self.db.commit()
             return ProposalSendResult(
                 status="ready",
@@ -333,6 +373,199 @@ class ProposalService:
         self.db.delete(item)
         self.db.commit()
 
+    def create_share_link(self, proposal_id: str, payload: ProposalShareLinkCreate | None = None) -> ProposalShareLink:
+        proposal = self.get_proposal(proposal_id)
+        payload = payload or ProposalShareLinkCreate()
+        link = ProposalShareLink(
+            proposal_id=proposal.id,
+            token=self._secure_token(),
+            expires_at=datetime.now(timezone.utc) + timedelta(days=payload.expires_in_days),
+            views_count=0,
+            created_by=self.actor.id if self.actor else None,
+        )
+        self.db.add(link)
+        self.db.flush()
+        self._audit("proposal.share_link_created", proposal, {"share_link_id": link.id})
+        self._record_event(proposal, "proposal.share_link_created", details={"share_link_id": link.id})
+        self.db.commit()
+        self.db.refresh(link)
+        return link
+
+    def list_share_links(self, proposal_id: str) -> list[ProposalShareLink]:
+        self._require(Proposal, proposal_id, "Proposal not found")
+        statement = (
+            select(ProposalShareLink)
+            .where(ProposalShareLink.proposal_id == proposal_id)
+            .order_by(desc(ProposalShareLink.created_at))
+        )
+        return list(self.db.scalars(statement).all())
+
+    def revoke_share_link(self, link_id: str) -> ProposalShareLink:
+        link = self._require(ProposalShareLink, link_id, "Proposal share link not found")
+        if not link.revoked_at:
+            link.revoked_at = datetime.now(timezone.utc)
+            proposal = self._require(Proposal, link.proposal_id, "Proposal not found")
+            self._audit("proposal.share_link_revoked", proposal, {"share_link_id": link.id})
+            self._record_event(proposal, "proposal.share_link_revoked", details={"share_link_id": link.id})
+        self.db.commit()
+        self.db.refresh(link)
+        return link
+
+    def get_public_proposal(self, token: str) -> tuple[Proposal, ProposalShareLink, CompanySettings]:
+        link = self._valid_share_link(token)
+        proposal = self.get_proposal(link.proposal_id)
+        now = datetime.now(timezone.utc)
+        link.views_count = int(link.views_count or 0) + 1
+        link.last_viewed_at = now
+        self._record_event(proposal, "proposal.share_link_viewed", details={"share_link_id": link.id})
+        self._record_event(proposal, "proposal.viewed", details={"share_link_id": link.id})
+        self.db.commit()
+        self.db.refresh(link)
+        return proposal, link, self.get_company_settings()
+
+    def register_pdf_download(self, token: str) -> Proposal:
+        link = self._valid_share_link(token)
+        proposal = self.get_proposal(link.proposal_id)
+        if not proposal.pdf_url:
+            proposal.pdf_url = self.pdf_service.generate(proposal, self.get_company_settings())
+        self._record_event(proposal, "proposal.downloaded", details={"share_link_id": link.id})
+        self.db.commit()
+        self.db.refresh(proposal)
+        return proposal
+
+    def register_customer_response(
+        self,
+        token: str,
+        payload: ProposalCustomerResponseIn,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> ProposalCustomerResponse:
+        link = self._valid_share_link(token)
+        proposal = self.get_proposal(link.proposal_id)
+        response = ProposalCustomerResponse(
+            proposal_id=proposal.id,
+            share_link_id=link.id,
+            response_type=payload.response_type,
+            customer_name=payload.customer_name,
+            customer_email=str(payload.customer_email) if payload.customer_email else None,
+            customer_phone=payload.customer_phone,
+            message=payload.message,
+            ip_address=ip_address,
+            user_agent=(user_agent or "")[:500] or None,
+        )
+        self.db.add(response)
+        if payload.response_type == "accepted":
+            proposal.status = "accepted"
+            event_type = "proposal.accepted"
+            message = "Obrigado! A equipe da Solar Solucoes recebeu sua confirmacao e entrara em contato para os proximos passos."
+        elif payload.response_type == "rejected":
+            proposal.status = "rejected"
+            event_type = "proposal.rejected"
+            message = "Obrigado pelo retorno. A equipe da Solar Solucoes registrou sua resposta."
+        elif payload.response_type == "request_changes":
+            if proposal.status == "sent":
+                proposal.status = "under_review"
+            event_type = "proposal.change_requested"
+            message = "Recebemos sua solicitacao de ajuste. A equipe comercial vai revisar a proposta."
+        elif payload.response_type == "talk_to_consultant":
+            event_type = "proposal.customer_interested"
+            message = "Recebemos seu pedido para falar com um consultor. A equipe vai entrar em contato."
+        else:
+            event_type = "proposal.customer_interested"
+            message = "Obrigado pelo interesse. A equipe da Solar Solucoes recebeu sua resposta."
+        self._record_event(
+            proposal,
+            event_type,
+            details={"share_link_id": link.id, "response_type": payload.response_type},
+        )
+        self._audit(event_type, proposal, {"share_link_id": link.id, "response_type": payload.response_type})
+        self.db.commit()
+        self.db.refresh(response)
+        response.confirmation_message = message  # type: ignore[attr-defined]
+        return response
+
+    def list_followups(self, status: str | None = None) -> list[ProposalFollowUp]:
+        statement = select(ProposalFollowUp).order_by(ProposalFollowUp.due_at)
+        if status:
+            statement = statement.where(ProposalFollowUp.status == status)
+        return list(self.db.scalars(statement).all())
+
+    def create_followup(self, proposal_id: str, payload: ProposalFollowUpCreate) -> ProposalFollowUp:
+        proposal = self.get_proposal(proposal_id)
+        followup = ProposalFollowUp(
+            proposal_id=proposal.id,
+            due_at=payload.due_at,
+            status="pending",
+            channel=payload.channel,
+            note=payload.note,
+            assigned_to=payload.assigned_to,
+        )
+        self.db.add(followup)
+        self.db.flush()
+        self._record_event(proposal, "proposal.followup_created", channel=payload.channel, details={"followup_id": followup.id})
+        self._audit("proposal.followup_created", proposal, {"followup_id": followup.id, "channel": payload.channel})
+        self.db.commit()
+        self.db.refresh(followup)
+        return followup
+
+    def complete_followup(self, followup_id: str) -> ProposalFollowUp:
+        followup = self._require(ProposalFollowUp, followup_id, "Proposal follow-up not found")
+        followup.status = "completed"
+        followup.completed_at = datetime.now(timezone.utc)
+        proposal = self._require(Proposal, followup.proposal_id, "Proposal not found")
+        self._record_event(proposal, "proposal.followup_completed", channel=followup.channel, details={"followup_id": followup.id})
+        self.db.commit()
+        self.db.refresh(followup)
+        return followup
+
+    def cancel_followup(self, followup_id: str) -> ProposalFollowUp:
+        followup = self._require(ProposalFollowUp, followup_id, "Proposal follow-up not found")
+        followup.status = "canceled"
+        proposal = self._require(Proposal, followup.proposal_id, "Proposal not found")
+        self._record_event(proposal, "proposal.followup_canceled", channel=followup.channel, details={"followup_id": followup.id})
+        self.db.commit()
+        self.db.refresh(followup)
+        return followup
+
+    def get_company_settings(self) -> CompanySettings:
+        company = self.db.scalar(select(CompanySettings).order_by(CompanySettings.created_at).limit(1))
+        if company:
+            return company
+        company = CompanySettings(
+            company_name=settings.company_name,
+            company_phone=settings.company_phone,
+            company_email=settings.company_email,
+            company_website=str(settings.company_website) if settings.company_website else None,
+            company_address=settings.company_address,
+            company_logo_url=settings.company_logo_path,
+            primary_color=settings.company_primary_color,
+            secondary_color=settings.company_secondary_color,
+            default_payment_conditions="A definir apos revisao comercial.",
+            default_proposal_validity_days=7,
+            default_proposal_notes=DEFAULT_PROPOSAL_NOTICE,
+        )
+        self.db.add(company)
+        self.db.commit()
+        self.db.refresh(company)
+        return company
+
+    def update_company_settings(self, payload: CompanySettingsIn) -> CompanySettings:
+        company = self.get_company_settings()
+        for field, value in payload.model_dump().items():
+            setattr(company, field, value)
+        self.db.add(
+            AuditLog(
+                actor_user_id=self.actor.id if self.actor else None,
+                action="company_settings.updated",
+                entity_type="company_settings",
+                entity_id=company.id,
+                details={},
+            )
+        )
+        self.db.commit()
+        self.db.refresh(company)
+        return company
+
     def recalculate(self, proposal: Proposal) -> None:
         subtotal = 0.0
         for index, item in enumerate(proposal.items or []):
@@ -385,6 +618,22 @@ class ProposalService:
             )
         )
 
+    def _record_event(
+        self,
+        proposal: Proposal,
+        event_type: str,
+        channel: str | None = None,
+        details: dict | None = None,
+    ) -> None:
+        self.db.add(
+            ProposalEvent(
+                proposal_id=proposal.id,
+                event_type=event_type,
+                channel=channel,
+                details=details or {},
+            )
+        )
+
     def _audit_price_item(self, action: str, item: ProposalPriceItem, details: dict | None = None) -> None:
         self.db.add(
             AuditLog(
@@ -396,17 +645,87 @@ class ProposalService:
             )
         )
 
-    def _send_whatsapp(self, proposal: Proposal, payload: ProposalSendRequest) -> ProposalSendResult:
-        public_url = self._public_pdf_url(proposal)
-        if settings.app_env.strip().lower() == "production" and not public_url:
-            self._audit("proposal.send_failed", proposal, {"channel": payload.channel, "reason": "missing_public_pdf_url"})
-            self.db.commit()
-            return ProposalSendResult(
-                status="error",
-                channel=payload.channel,
-                message="PDF gerado, mas nao ha URL publica segura configurada para envio.",
-                pdf_url=proposal.pdf_url,
+    def _valid_share_link(self, token: str) -> ProposalShareLink:
+        link = self.db.scalar(select(ProposalShareLink).where(ProposalShareLink.token == token))
+        if not link:
+            raise ValueError("Proposal link not found")
+        now = datetime.now(timezone.utc)
+        expires_at = self._as_aware(link.expires_at)
+        if link.revoked_at:
+            raise ValueError("Proposal link revoked")
+        if expires_at < now:
+            raise ValueError("Proposal link expired")
+        return link
+
+    def _active_share_link(self, proposal: Proposal) -> ProposalShareLink | None:
+        now = datetime.now(timezone.utc)
+        statement = (
+            select(ProposalShareLink)
+            .where(
+                ProposalShareLink.proposal_id == proposal.id,
+                ProposalShareLink.revoked_at.is_(None),
+                ProposalShareLink.expires_at > now,
             )
+            .order_by(desc(ProposalShareLink.created_at))
+        )
+        return self.db.scalar(statement)
+
+    def _ensure_share_link(self, proposal: Proposal) -> ProposalShareLink:
+        link = self._active_share_link(proposal)
+        if link:
+            return link
+        link = ProposalShareLink(
+            proposal_id=proposal.id,
+            token=self._secure_token(),
+            expires_at=datetime.now(timezone.utc) + timedelta(days=15),
+            views_count=0,
+            created_by=self.actor.id if self.actor else None,
+        )
+        self.db.add(link)
+        self.db.flush()
+        self._record_event(proposal, "proposal.share_link_created", details={"share_link_id": link.id, "auto": True})
+        self._audit("proposal.share_link_created", proposal, {"share_link_id": link.id, "auto": True})
+        return link
+
+    def _create_default_followups(self, proposal: Proposal, channel: str) -> None:
+        existing_pending = [
+            followup
+            for followup in (proposal.followups or [])
+            if followup.status == "pending" and followup.channel == channel
+        ]
+        if existing_pending:
+            return
+        now = datetime.now(timezone.utc)
+        for days, label in [(1, "Retorno comercial em 24h"), (3, "Segundo retorno comercial em 3 dias")]:
+            followup = ProposalFollowUp(
+                proposal_id=proposal.id,
+                due_at=now + timedelta(days=days),
+                status="pending",
+                channel=channel,
+                note=label,
+                assigned_to=self.actor.id if self.actor else None,
+            )
+            self.db.add(followup)
+            self.db.flush()
+            self._record_event(proposal, "proposal.followup_created", channel=channel, details={"followup_id": followup.id})
+
+    def public_url_for_share_link(self, link: ProposalShareLink) -> str:
+        base = str(settings.frontend_origins[0] if settings.frontend_origins else settings.api_base_url).rstrip("/")
+        return f"{base}/proposta/{link.token}"
+
+    @staticmethod
+    def _secure_token() -> str:
+        return secrets.token_urlsafe(32)
+
+    @staticmethod
+    def _as_aware(value: datetime) -> datetime:
+        if value.tzinfo:
+            return value
+        return value.replace(tzinfo=timezone.utc)
+
+    def _send_whatsapp(self, proposal: Proposal, payload: ProposalSendRequest) -> ProposalSendResult:
+        link = self._ensure_share_link(proposal)
+        public_url = self.public_url_for_share_link(link)
 
         recipient = payload.recipient_phone or proposal.customer_phone
         if not recipient:
@@ -422,6 +741,10 @@ class ProposalService:
         message = payload.message or self._default_proposal_message(proposal, public_url)
         if settings.app_env.strip().lower() != "production":
             self._audit("proposal.whatsapp_sent", proposal, {"channel": payload.channel, "simulated": True})
+            self._record_event(proposal, "proposal.whatsapp_sent", channel=payload.channel, details={"simulated": True, "share_link_id": link.id})
+            self._record_event(proposal, "proposal.sent", channel=payload.channel, details={"simulated": True, "share_link_id": link.id})
+            self._create_default_followups(proposal, payload.channel)
+            proposal.status = "sent"
             self.db.commit()
             return ProposalSendResult(
                 status="simulated",
@@ -446,8 +769,11 @@ class ProposalService:
             )
 
         proposal.status = "sent"
-        self._audit("proposal.whatsapp_sent", proposal, {"channel": payload.channel})
-        self._audit("proposal.sent", proposal, {"channel": payload.channel})
+        self._audit("proposal.whatsapp_sent", proposal, {"channel": payload.channel, "share_link_id": link.id})
+        self._audit("proposal.sent", proposal, {"channel": payload.channel, "share_link_id": link.id})
+        self._record_event(proposal, "proposal.whatsapp_sent", channel=payload.channel, details={"share_link_id": link.id})
+        self._record_event(proposal, "proposal.sent", channel=payload.channel, details={"share_link_id": link.id})
+        self._create_default_followups(proposal, payload.channel)
         self.db.commit()
         return ProposalSendResult(
             status="sent",
@@ -470,10 +796,15 @@ class ProposalService:
                 pdf_url=proposal.pdf_url,
             )
 
-        public_url = self._public_pdf_url(proposal)
+        link = self._ensure_share_link(proposal)
+        public_url = self.public_url_for_share_link(link)
         body = payload.message or self._default_proposal_email_body(proposal, public_url)
         if settings.app_env.strip().lower() != "production":
             self._audit("proposal.email_sent", proposal, {"channel": payload.channel, "simulated": True})
+            self._record_event(proposal, "proposal.email_sent", channel=payload.channel, details={"simulated": True, "share_link_id": link.id})
+            self._record_event(proposal, "proposal.sent", channel=payload.channel, details={"simulated": True, "share_link_id": link.id})
+            self._create_default_followups(proposal, payload.channel)
+            proposal.status = "sent"
             self.db.commit()
             return ProposalSendResult(
                 status="simulated",
@@ -500,8 +831,11 @@ class ProposalService:
             )
 
         proposal.status = "sent"
-        self._audit("proposal.email_sent", proposal, {"channel": payload.channel})
-        self._audit("proposal.sent", proposal, {"channel": payload.channel})
+        self._audit("proposal.email_sent", proposal, {"channel": payload.channel, "share_link_id": link.id})
+        self._audit("proposal.sent", proposal, {"channel": payload.channel, "share_link_id": link.id})
+        self._record_event(proposal, "proposal.email_sent", channel=payload.channel, details={"share_link_id": link.id})
+        self._record_event(proposal, "proposal.sent", channel=payload.channel, details={"share_link_id": link.id})
+        self._create_default_followups(proposal, payload.channel)
         self.db.commit()
         return ProposalSendResult(
             status="sent",

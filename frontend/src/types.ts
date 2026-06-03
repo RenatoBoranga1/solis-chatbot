@@ -36,6 +36,23 @@ export type DashboardMetrics = {
   transferidos_para_humano: number;
   taxa_conversao_orcamento: number;
   satisfacao_media: number | null;
+  proposal_metrics: ProposalMetrics | null;
+};
+
+export type ProposalMetrics = {
+  created: number;
+  sent: number;
+  accepted: number;
+  rejected: number;
+  open: number;
+  viewed: number;
+  pending_followups: number;
+  overdue_followups: number;
+  total_pipeline_value: number;
+  accepted_value: number;
+  average_ticket: number;
+  conversion_rate: number;
+  leads_without_proposal: number;
 };
 
 export type AIAnalysis = {
@@ -116,6 +133,82 @@ export type Proposal = {
   created_at: string;
   updated_at: string | null;
   items: ProposalItem[];
+  share_links?: ProposalShareLink[];
+  events?: ProposalEvent[];
+  followups?: ProposalFollowUp[];
+  customer_responses?: ProposalCustomerResponse[];
+};
+
+export type ProposalShareLink = {
+  id: string;
+  proposal_id: string;
+  token: string;
+  expires_at: string;
+  revoked_at: string | null;
+  views_count: number;
+  last_viewed_at: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string | null;
+  public_url: string | null;
+};
+
+export type ProposalEvent = {
+  id: string;
+  proposal_id: string;
+  event_type: string;
+  channel: string | null;
+  details: Record<string, unknown>;
+  created_at: string;
+};
+
+export type ProposalCustomerResponse = {
+  id: string;
+  proposal_id: string;
+  share_link_id: string;
+  response_type: "interested" | "request_changes" | "accepted" | "rejected" | "talk_to_consultant" | string;
+  customer_name: string | null;
+  customer_email: string | null;
+  customer_phone: string | null;
+  message: string | null;
+  created_at: string;
+};
+
+export type ProposalFollowUp = {
+  id: string;
+  proposal_id: string;
+  due_at: string;
+  status: "pending" | "completed" | "canceled" | "overdue" | string;
+  channel: "whatsapp" | "email" | "phone" | "manual" | string;
+  note: string | null;
+  assigned_to: string | null;
+  completed_at: string | null;
+  created_at: string;
+  updated_at: string | null;
+};
+
+export type CompanySettings = {
+  id: string;
+  company_name: string;
+  company_phone: string | null;
+  company_email: string | null;
+  company_website: string | null;
+  company_address: string | null;
+  company_logo_url: string | null;
+  primary_color: string;
+  secondary_color: string;
+  default_payment_conditions: string | null;
+  default_proposal_validity_days: number;
+  default_proposal_notes: string | null;
+  created_at: string;
+  updated_at: string | null;
+};
+
+export type PublicProposal = {
+  proposal: Proposal;
+  share_link: ProposalShareLink;
+  company: CompanySettings;
+  pdf_download_url: string;
 };
 
 export type ProposalPriceItem = {

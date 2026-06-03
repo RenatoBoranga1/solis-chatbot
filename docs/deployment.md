@@ -53,6 +53,11 @@ Confirmar tabelas:
 - `proposals`.
 - `proposal_items`.
 - `proposal_price_items`.
+- `proposal_share_links`.
+- `proposal_customer_responses`.
+- `proposal_events`.
+- `proposal_followups`.
+- `company_settings`.
 
 ## Omnichannel
 
@@ -65,13 +70,19 @@ Confirmar tabelas:
 ## Propostas comerciais
 
 - Configurar `PROPOSAL_STORAGE_PATH`.
-- Configurar `PROPOSAL_PUBLIC_BASE_URL` se o envio por WhatsApp ou link seguro for usado.
+- Configurar `FRONTEND_ORIGINS` com o dominio publico que servira `/proposta/{token}`.
 - Configurar dados da empresa para o PDF: `COMPANY_NAME`, `COMPANY_PHONE`, `COMPANY_EMAIL`, `COMPANY_WEBSITE`, `COMPANY_ADDRESS`, `COMPANY_LOGO_PATH`, `COMPANY_PRIMARY_COLOR` e `COMPANY_SECONDARY_COLOR`.
+- Revisar a aba `Configuracoes comerciais` no painel antes da primeira proposta real.
 - Configurar SMTP para envio real por e-mail: `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM_EMAIL`, `SMTP_FROM_NAME` e `SMTP_USE_TLS`.
 - Cadastrar e revisar a tabela de precos antes de gerar propostas reais a partir de lead.
 - Confirmar que propostas sem tabela ativa continuam com valores zerados para revisao manual.
 - Nao enviar caminho local do PDF ao cliente.
 - Validar envio manual, WhatsApp, e-mail e link seguro em ambiente de homologacao.
+- Validar pagina publica `https://seu-dominio.com/proposta/{token}`.
+- Validar download protegido em `/public/proposals/{token}/pdf`.
+- Validar resposta digital do cliente: interessado, aceite, recusa, ajuste e consultor.
+- Validar revogacao e expiracao de link seguro.
+- Validar criacao e conclusao de follow-ups comerciais.
 - Garantir que a pasta de PDFs tenha backup e controle de acesso.
 - Revisar permissões dos perfis `admin`, `comercial` e `gestor`.
 - Validar geração de PDF antes da homologação.
@@ -93,7 +104,7 @@ cd backend
 python -m unittest discover tests
 ```
 
-Os testes devem cobrir webhook, assinatura, deduplicacao, anexos, auditoria, `send_errors`, continuidade omnichannel, propostas, tabela de precos, classificacao de gravidade e handoff.
+Os testes devem cobrir webhook, assinatura, deduplicacao, anexos, auditoria, `send_errors`, continuidade omnichannel, propostas, tabela de precos, link seguro, resposta digital, follow-ups, configuracoes comerciais, classificacao de gravidade e handoff.
 Também devem cobrir análise por regras, lead quente, chamado crítico, resposta sugerida e endpoints de IA.
 
 ## Observabilidade e seguranca

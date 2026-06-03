@@ -275,6 +275,22 @@ class KnowledgeOut(KnowledgeIn):
     model_config = ConfigDict(from_attributes=True)
 
 
+class ProposalMetrics(BaseModel):
+    created: int = 0
+    sent: int = 0
+    accepted: int = 0
+    rejected: int = 0
+    open: int = 0
+    viewed: int = 0
+    pending_followups: int = 0
+    overdue_followups: int = 0
+    total_pipeline_value: float = 0
+    accepted_value: float = 0
+    average_ticket: float = 0
+    conversion_rate: float = 0
+    leads_without_proposal: int = 0
+
+
 class DashboardMetrics(BaseModel):
     total_atendimentos: int
     leads_orcamento: int
@@ -286,6 +302,7 @@ class DashboardMetrics(BaseModel):
     transferidos_para_humano: int
     taxa_conversao_orcamento: float
     satisfacao_media: float | None
+    proposal_metrics: ProposalMetrics | None = None
 
 
 class AIAnalysisOut(BaseModel):
@@ -403,6 +420,122 @@ class ProposalPriceItemActivePatch(BaseModel):
     active: bool
 
 
+ProposalCustomerResponseType = Literal[
+    "interested",
+    "request_changes",
+    "accepted",
+    "rejected",
+    "talk_to_consultant",
+]
+ProposalFollowUpStatus = Literal["pending", "completed", "canceled", "overdue"]
+ProposalFollowUpChannel = Literal["whatsapp", "email", "phone", "manual"]
+
+
+class ProposalShareLinkCreate(BaseModel):
+    expires_in_days: int = Field(default=15, ge=1, le=90)
+
+
+class ProposalShareLinkOut(BaseModel):
+    id: str
+    proposal_id: str
+    token: str
+    expires_at: datetime
+    revoked_at: datetime | None
+    views_count: int
+    last_viewed_at: datetime | None
+    created_by: str | None
+    created_at: datetime
+    updated_at: datetime | None
+    public_url: str | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ProposalCustomerResponseIn(BaseModel):
+    response_type: ProposalCustomerResponseType
+    customer_name: str | None = Field(default=None, max_length=180)
+    customer_email: EmailStr | None = None
+    customer_phone: str | None = Field(default=None, max_length=40)
+    message: str | None = Field(default=None, max_length=2000)
+
+
+class ProposalCustomerResponseOut(BaseModel):
+    id: str
+    proposal_id: str
+    share_link_id: str
+    response_type: str
+    customer_name: str | None
+    customer_email: EmailStr | None
+    customer_phone: str | None
+    message: str | None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ProposalEventOut(BaseModel):
+    id: str
+    proposal_id: str
+    event_type: str
+    channel: str | None
+    details: dict[str, Any]
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ProposalFollowUpCreate(BaseModel):
+    due_at: datetime
+    channel: ProposalFollowUpChannel = "manual"
+    note: str | None = Field(default=None, max_length=2000)
+    assigned_to: str | None = None
+
+
+class ProposalFollowUpOut(BaseModel):
+    id: str
+    proposal_id: str
+    due_at: datetime
+    status: str
+    channel: str
+    note: str | None
+    assigned_to: str | None
+    completed_at: datetime | None
+    created_at: datetime
+    updated_at: datetime | None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CompanySettingsIn(BaseModel):
+    company_name: str = Field(default="Solar Solucoes", max_length=180)
+    company_phone: str | None = Field(default=None, max_length=60)
+    company_email: EmailStr | None = None
+    company_website: str | None = None
+    company_address: str | None = None
+    company_logo_url: str | None = None
+    primary_color: str = Field(default="#FFCC33", max_length=20)
+    secondary_color: str = Field(default="#0B1F33", max_length=20)
+    default_payment_conditions: str | None = None
+    default_proposal_validity_days: int = Field(default=7, ge=1, le=90)
+    default_proposal_notes: str | None = None
+
+    @field_validator("company_website", "company_logo_url")
+    @classmethod
+    def safe_company_url(cls, value: str | None) -> str | None:
+        try:
+            return validate_safe_url(value)
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
+
+
+class CompanySettingsOut(CompanySettingsIn):
+    id: str
+    created_at: datetime
+    updated_at: datetime | None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class ProposalBase(BaseModel):
     customer_id: str | None = None
     lead_id: str | None = None
@@ -460,6 +593,10 @@ class ProposalOut(ProposalBase):
     created_at: datetime
     updated_at: datetime | None
     items: list[ProposalItemOut] = Field(default_factory=list)
+    share_links: list[ProposalShareLinkOut] = Field(default_factory=list)
+    events: list[ProposalEventOut] = Field(default_factory=list)
+    followups: list[ProposalFollowUpOut] = Field(default_factory=list)
+    customer_responses: list[ProposalCustomerResponseOut] = Field(default_factory=list)
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -485,3 +622,16 @@ class ProposalSendResult(BaseModel):
     pdf_url: str | None = None
     delivery_reference: str | None = None
     sent_at: datetime | None = None
+
+
+class PublicProposalOut(BaseModel):
+    proposal: ProposalOut
+    share_link: ProposalShareLinkOut
+    company: CompanySettingsOut
+    pdf_download_url: str
+
+
+class PublicProposalResponseResult(BaseModel):
+    status: str
+    message: str
+    response: ProposalCustomerResponseOut

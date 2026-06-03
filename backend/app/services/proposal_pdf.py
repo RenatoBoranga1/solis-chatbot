@@ -6,7 +6,7 @@ from pathlib import Path
 import textwrap
 
 from app.core.config import settings
-from app.models import Proposal
+from app.models import CompanySettings, Proposal
 
 
 PAGE_WIDTH = 595
@@ -26,7 +26,10 @@ class PdfPage:
 
 
 class ProposalPdfService:
-    def generate(self, proposal: Proposal) -> str:
+    company_settings: CompanySettings | None = None
+
+    def generate(self, proposal: Proposal, company_settings: CompanySettings | None = None) -> str:
+        self.company_settings = company_settings
         storage_dir = Path(settings.proposal_storage_path)
         storage_dir.mkdir(parents=True, exist_ok=True)
         filename = f"{proposal.proposal_number}.pdf".replace("/", "-")
@@ -63,8 +66,10 @@ class ProposalPdfService:
         page.commands.append(f"{MARGIN_X} 728 {PAGE_WIDTH - (MARGIN_X * 2)} 74 re f")
         page.commands.append(self._fill_color(*PRIMARY))
         page.commands.append(f"{MARGIN_X} 728 10 74 re f")
-        self._text(page, settings.company_name, MARGIN_X + 24, 780, 18, "F2", 1, 1, 1)
+        self._text(page, self._company_name(), MARGIN_X + 24, 780, 18, "F2", 1, 1, 1)
         self._text(page, "Proposta Comercial de Sistema Solar Fotovoltaico", MARGIN_X + 24, 758, 13, "F1", 1, 1, 1)
+        if self.company_settings and self.company_settings.company_logo_url:
+            self._text(page, "Logo oficial configurado", MARGIN_X + 24, 742, 7.5, "F1", 1, 1, 1)
         self._text(page, f"Proposta: {proposal.proposal_number}", 380, 781, 9, "F2", 1, 1, 1)
         self._text(page, f"Emissao: {issue_date}", 380, 765, 9, "F1", 1, 1, 1)
         self._text(page, f"Validade: {valid_until}", 380, 750, 9, "F1", 1, 1, 1)
@@ -103,7 +108,17 @@ class ProposalPdfService:
             self._text(page, value, x + 10, y - 49, 13, "F2", *DARK_TEXT)
         warning = "Estimativas dependem de validacao tecnica, analise do local, disponibilidade de rede e regras da concessionaria."
         self._wrapped_text(page, warning, MARGIN_X + 18, y - 86, 93, 8, "F1", MUTED_TEXT)
-        return y - 112
+        self._wrapped_text(
+            page,
+            "Beneficios da solucao: reducao da dependencia da rede, acompanhamento especializado, monitoramento e suporte no pos-venda.",
+            MARGIN_X + 18,
+            y - 104,
+            93,
+            8,
+            "F1",
+            DARK_TEXT,
+        )
+        return y - 132
 
     def _draw_items_table(self, page: PdfPage, pages: list[PdfPage], proposal: Proposal, y: int) -> tuple[PdfPage, int]:
         page, y = self._ensure_space(page, pages, y, 110)
@@ -141,6 +156,8 @@ class ProposalPdfService:
         self._section_title(page, "Observacoes importantes", y)
         notices = [
             proposal.notes or "Esta proposta foi gerada como rascunho e deve ser revisada pela equipe Solar Solucoes.",
+            "Proximos passos: validacao comercial, confirmacao tecnica, formalizacao contratual e acompanhamento da homologacao.",
+            "Esta proposta pode ser aceita digitalmente pelo link seguro compartilhado pela equipe comercial.",
             "Valores sujeitos a validacao tecnica e comercial.",
             "Proposta sujeita a analise do local de instalacao.",
             "Homologacao depende da concessionaria local.",
@@ -169,10 +186,10 @@ class ProposalPdfService:
         footer = "Energia solar com acompanhamento especializado do primeiro contato ao pos-venda."
         contact = " | ".join(
             item
-            for item in [settings.company_phone, settings.company_email, str(settings.company_website or "")]
+            for item in [self._company_phone(), self._company_email(), self._company_website()]
             if item
         )
-        self._text(page, settings.company_name, MARGIN_X + 14, 60, 8, "F2", 1, 1, 1)
+        self._text(page, self._company_name(), MARGIN_X + 14, 60, 8, "F2", 1, 1, 1)
         self._text(page, footer, MARGIN_X + 14, 48, 7.5, "F1", 1, 1, 1)
         if contact:
             self._text(page, contact[:80], 312, 54, 7.5, "F1", 1, 1, 1)
@@ -353,3 +370,16 @@ class ProposalPdfService:
             "outros": "Outros",
         }
         return labels.get(category, category)
+
+    def _company_name(self) -> str:
+        return (self.company_settings.company_name if self.company_settings else None) or settings.company_name
+
+    def _company_phone(self) -> str | None:
+        return (self.company_settings.company_phone if self.company_settings else None) or settings.company_phone
+
+    def _company_email(self) -> str | None:
+        return (self.company_settings.company_email if self.company_settings else None) or settings.company_email
+
+    def _company_website(self) -> str | None:
+        value = (self.company_settings.company_website if self.company_settings else None) or settings.company_website
+        return str(value) if value else None

@@ -1,6 +1,7 @@
 import type {
   AIAnalysis,
   ChatResponse,
+  CompanySettings,
   Conversation,
   ContinueWhatsAppResponse,
   DashboardAIInsights,
@@ -8,9 +9,13 @@ import type {
   KnowledgeArticle,
   Lead,
   Proposal,
+  ProposalCustomerResponse,
+  ProposalFollowUp,
   ProposalPriceItem,
+  ProposalShareLink,
   ProposalSendRequest,
   ProposalSendResult,
+  PublicProposal,
   Ticket,
 } from "./types";
 
@@ -120,6 +125,31 @@ export async function login(email: string, password: string): Promise<string> {
   return data.access_token;
 }
 
+export async function getPublicProposal(token: string): Promise<PublicProposal> {
+  const response = await fetch(`${API_BASE_URL}/public/proposals/${token}`);
+  if (!response.ok) throw new Error("Link de proposta invalido ou indisponivel.");
+  return response.json();
+}
+
+export async function sendPublicProposalResponse(
+  token: string,
+  payload: {
+    response_type: string;
+    customer_name?: string | null;
+    customer_email?: string | null;
+    customer_phone?: string | null;
+    message?: string | null;
+  },
+): Promise<{ status: string; message: string; response: ProposalCustomerResponse }> {
+  const response = await fetch(`${API_BASE_URL}/public/proposals/${token}/responses`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) throw new Error("Nao foi possivel registrar sua resposta.");
+  return response.json();
+}
+
 async function adminFetch<T>(path: string, token: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...init,
@@ -141,7 +171,9 @@ export const adminApi = {
   leads: (token: string) => adminFetch<Lead[]>("/leads", token),
   tickets: (token: string) => adminFetch<Ticket[]>("/tickets", token),
   proposals: (token: string) => adminFetch<Proposal[]>("/proposals", token),
+  proposalFollowups: (token: string) => adminFetch<ProposalFollowUp[]>("/proposals/followups", token),
   proposalPriceItems: (token: string) => adminFetch<ProposalPriceItem[]>("/proposal-price-items", token),
+  companySettings: (token: string) => adminFetch<CompanySettings>("/company-settings", token),
   knowledge: (token: string) => adminFetch<KnowledgeArticle[]>("/knowledge", token),
   createProposal: (token: string, payload: Partial<Proposal>) =>
     adminFetch<Proposal>("/proposals", token, { method: "POST", body: JSON.stringify(payload) }),
@@ -162,6 +194,19 @@ export const adminApi = {
     adminFetch<Proposal>(`/proposals/${id}/generate-pdf`, token, { method: "POST" }),
   applyProposalPriceTable: (token: string, id: string) =>
     adminFetch<Proposal>(`/proposals/${id}/apply-price-table`, token, { method: "POST" }),
+  createProposalShareLink: (token: string, id: string, expiresInDays = 15) =>
+    adminFetch<ProposalShareLink>(`/proposals/${id}/share-link`, token, {
+      method: "POST",
+      body: JSON.stringify({ expires_in_days: expiresInDays }),
+    }),
+  revokeProposalShareLink: (token: string, id: string) =>
+    adminFetch<ProposalShareLink>(`/proposals/share-links/${id}/revoke`, token, { method: "PATCH" }),
+  createProposalFollowup: (token: string, id: string, payload: Partial<ProposalFollowUp>) =>
+    adminFetch<ProposalFollowUp>(`/proposals/${id}/followups`, token, { method: "POST", body: JSON.stringify(payload) }),
+  completeProposalFollowup: (token: string, id: string) =>
+    adminFetch<ProposalFollowUp>(`/proposals/followups/${id}/complete`, token, { method: "PATCH" }),
+  cancelProposalFollowup: (token: string, id: string) =>
+    adminFetch<ProposalFollowUp>(`/proposals/followups/${id}/cancel`, token, { method: "PATCH" }),
   sendProposal: (token: string, id: string, payload: ProposalSendRequest) =>
     adminFetch<ProposalSendResult>(`/proposals/${id}/send`, token, {
       method: "POST",
@@ -178,6 +223,8 @@ export const adminApi = {
     }),
   deleteProposalPriceItem: (token: string, id: string) =>
     adminFetch<void>(`/proposal-price-items/${id}`, token, { method: "DELETE" }),
+  updateCompanySettings: (token: string, payload: Partial<CompanySettings>) =>
+    adminFetch<CompanySettings>("/company-settings", token, { method: "PUT", body: JSON.stringify(payload) }),
   createKnowledge: (token: string, payload: Omit<KnowledgeArticle, "id" | "created_at">) =>
     adminFetch<KnowledgeArticle>("/knowledge", token, { method: "POST", body: JSON.stringify(payload) }),
   updateTicketStatus: (token: string, id: string, status: string) =>

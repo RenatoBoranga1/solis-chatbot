@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from datetime import timedelta
 
 from fastapi.testclient import TestClient
 
@@ -7,13 +8,31 @@ from app.api.deps import get_current_user
 from app.core.config import settings
 from app.db.session import get_db
 from app.main import app
-from app.models import AuditLog, Conversation, Customer, Lead, Proposal, ProposalItem, ProposalPriceItem, User, utc_now
+from app.models import (
+    AuditLog,
+    CompanySettings,
+    Conversation,
+    Customer,
+    Lead,
+    Proposal,
+    ProposalCustomerResponse,
+    ProposalEvent,
+    ProposalFollowUp,
+    ProposalItem,
+    ProposalPriceItem,
+    ProposalShareLink,
+    User,
+    utc_now,
+)
 from app.schemas import (
+    ProposalCustomerResponseIn,
     ProposalCreate,
+    ProposalFollowUpCreate,
     ProposalItemCreate,
     ProposalItemUpdate,
     ProposalPriceItemCreate,
     ProposalPriceItemUpdate,
+    ProposalShareLinkCreate,
     ProposalSendRequest,
     ProposalUpdate,
 )
@@ -183,6 +202,37 @@ def price_item_fixture() -> ProposalPriceItem:
     )
 
 
+def company_settings_fixture() -> CompanySettings:
+    return CompanySettings(
+        id="company-1",
+        company_name="Solar Solucoes",
+        company_phone="(11) 99999-0000",
+        company_email="contato@solarsolucoes.com.br",
+        company_website="https://solarsolucoes.com.br",
+        company_address="Endereco comercial",
+        company_logo_url=None,
+        primary_color="#FFCC33",
+        secondary_color="#0B1F33",
+        default_payment_conditions="Entrada e saldo conforme proposta.",
+        default_proposal_validity_days=12,
+        default_proposal_notes="Observacao padrao de teste.",
+        created_at=utc_now(),
+    )
+
+
+def share_link_fixture(proposal: Proposal) -> ProposalShareLink:
+    return ProposalShareLink(
+        id="share-1",
+        proposal_id=proposal.id,
+        token="token-publico-teste",
+        expires_at=utc_now() + timedelta(days=10),
+        revoked_at=None,
+        views_count=0,
+        created_by="user-admin",
+        created_at=utc_now(),
+    )
+
+
 class ProposalServiceTest(unittest.TestCase):
     def test_create_manual_proposal_calculates_totals_and_audits(self):
         db = FakeDb()
@@ -259,7 +309,7 @@ class ProposalServiceTest(unittest.TestCase):
             original_storage = settings.proposal_storage_path
             settings.proposal_storage_path = tmpdir
             try:
-                db = FakeDb(scalar_queue=[proposal, proposal, proposal])
+                db = FakeDb(scalar_queue=[proposal, proposal, None, proposal])
                 service = ProposalService(db, admin_user())
                 service.update_status(proposal.id, "approved")
                 self.assertEqual(proposal.status, "approved")
@@ -315,35 +365,109 @@ class ProposalServiceTest(unittest.TestCase):
         original_env = settings.app_env
         settings.app_env = "development"
         try:
-            db = FakeDb(scalar_queue=[proposal, proposal])
+            db = FakeDb(scalar_queue=[proposal, None, None, proposal, None])
             service = ProposalService(db, admin_user())
             whatsapp = service.send(proposal.id, ProposalSendRequest(channel="whatsapp", recipient_phone="5511999998888"))
             email = service.send(proposal.id, ProposalSendRequest(channel="email", recipient_email="cliente@example.com"))
 
             self.assertEqual(whatsapp.status, "simulated")
             self.assertEqual(email.status, "simulated")
-            self.assertNotEqual(proposal.status, "sent")
+            self.assertEqual(proposal.status, "sent")
+            self.assertTrue([item for item in db.added if isinstance(item, ProposalShareLink)])
+            self.assertTrue([item for item in db.added if isinstance(item, ProposalFollowUp)])
         finally:
             settings.app_env = original_env
 
-    def test_blocks_real_send_without_public_pdf_url_in_production(self):
+    def test_production_send_without_whatsapp_credentials_returns_error(self):
         proposal = proposal_fixture()
         original_env = settings.app_env
-        original_public_url = settings.proposal_public_base_url
         settings.app_env = "production"
-        settings.proposal_public_base_url = None
         try:
-            db = FakeDb(scalar_queue=[proposal])
+            db = FakeDb(scalar_queue=[proposal, None, None])
             result = ProposalService(db, admin_user()).send(
                 proposal.id,
                 ProposalSendRequest(channel="whatsapp", recipient_phone="5511999998888"),
             )
 
             self.assertEqual(result.status, "error")
-            self.assertIn("URL publica segura", result.message)
+            self.assertIn("WhatsApp", result.message)
         finally:
             settings.app_env = original_env
-            settings.proposal_public_base_url = original_public_url
+
+    def test_create_share_link_records_auditable_link(self):
+        proposal = proposal_fixture()
+        db = FakeDb(scalar_queue=[proposal])
+
+        link = ProposalService(db, admin_user()).create_share_link(proposal.id, ProposalShareLinkCreate(expires_in_days=5))
+
+        self.assertEqual(link.proposal_id, proposal.id)
+        self.assertIsNotNone(link.token)
+        self.assertGreaterEqual((link.expires_at - utc_now()).days, 4)
+        self.assertTrue([item for item in db.added if isinstance(item, ProposalEvent)])
+        self.assertTrue([item for item in db.added if isinstance(item, AuditLog)])
+
+    def test_public_proposal_increments_view_and_returns_company_settings(self):
+        proposal = proposal_fixture()
+        link = share_link_fixture(proposal)
+        company = company_settings_fixture()
+        db = FakeDb(scalar_queue=[link, proposal, company])
+
+        public_proposal, public_link, public_company = ProposalService(db).get_public_proposal(link.token)
+
+        self.assertEqual(public_proposal.id, proposal.id)
+        self.assertEqual(public_company.company_name, company.company_name)
+        self.assertEqual(public_link.views_count, 1)
+        self.assertTrue([item for item in db.added if isinstance(item, ProposalEvent)])
+
+    def test_register_customer_acceptance_updates_status_and_response(self):
+        proposal = proposal_fixture()
+        proposal.status = "sent"
+        link = share_link_fixture(proposal)
+        db = FakeDb(scalar_queue=[link, proposal])
+
+        response = ProposalService(db, admin_user()).register_customer_response(
+            link.token,
+            ProposalCustomerResponseIn(
+                response_type="accepted",
+                customer_name="Cliente Proposta",
+                customer_email="cliente@example.com",
+                message="Aprovado.",
+            ),
+        )
+
+        self.assertIsInstance(response, ProposalCustomerResponse)
+        self.assertEqual(response.response_type, "accepted")
+        self.assertEqual(proposal.status, "accepted")
+        self.assertTrue([item for item in db.added if isinstance(item, ProposalEvent)])
+
+    def test_create_and_complete_followup(self):
+        proposal = proposal_fixture()
+        followup_due = utc_now() + timedelta(days=1)
+        db = FakeDb(scalar_queue=[proposal])
+        service = ProposalService(db, admin_user())
+
+        followup = service.create_followup(
+            proposal.id,
+            ProposalFollowUpCreate(due_at=followup_due, channel="whatsapp", note="Retornar proposta"),
+        )
+
+        self.assertEqual(followup.status, "pending")
+        self.assertEqual(followup.channel, "whatsapp")
+
+        db.objects[(ProposalFollowUp, followup.id)] = followup
+        db.objects[(Proposal, proposal.id)] = proposal
+        completed = service.complete_followup(followup.id)
+        self.assertEqual(completed.status, "completed")
+        self.assertIsNotNone(completed.completed_at)
+
+    def test_company_settings_fallback_uses_environment_defaults(self):
+        db = FakeDb()
+
+        company = ProposalService(db, admin_user()).get_company_settings()
+
+        self.assertEqual(company.company_name, settings.company_name)
+        self.assertEqual(company.default_proposal_validity_days, 7)
+        self.assertTrue([item for item in db.added if isinstance(item, CompanySettings)])
 
 
 class ProposalRoutesPermissionTest(unittest.TestCase):

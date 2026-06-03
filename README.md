@@ -131,6 +131,18 @@ Propostas:
 - `POST /proposals/{id}/generate-pdf`
 - `POST /proposals/{id}/apply-price-table`
 - `POST /proposals/{id}/send`
+- `POST /proposals/{id}/share-link`
+- `GET /proposals/{id}/share-links`
+- `PATCH /proposals/share-links/{link_id}/revoke`
+- `GET /proposals/followups`
+- `POST /proposals/{id}/followups`
+- `PATCH /proposals/followups/{followup_id}/complete`
+- `PATCH /proposals/followups/{followup_id}/cancel`
+- `GET /public/proposals/{token}`
+- `POST /public/proposals/{token}/responses`
+- `GET /public/proposals/{token}/pdf`
+- `GET /company-settings`
+- `PUT /company-settings`
 - `GET /proposal-price-items`
 - `POST /proposal-price-items`
 - `PUT /proposal-price-items/{id}`
@@ -159,6 +171,8 @@ Dashboard:
 - `GET /dashboard/intents`
 - `GET /dashboard/severity`
 - `GET /dashboard/resolution-rate`
+
+`GET /dashboard/metrics` tambem retorna `proposal_metrics`, com propostas criadas, enviadas, aceitas, visualizadas, follow-ups pendentes/vencidos, valor de pipeline, ticket medio e conversao.
 
 Análise Inteligente:
 
@@ -346,12 +360,15 @@ Guia completo: [`docs/proposals.md`](docs/proposals.md).
 - O bot e a IA nao definem preco final sozinhos.
 - O botao `Aplicar tabela de precos` recalcula uma proposta existente com os itens ativos configurados.
 - O PDF premium usa dados da empresa, capa visual, resumo tecnico, tabela de itens, resumo financeiro, avisos comerciais e rodape.
-- Configure `COMPANY_NAME`, `COMPANY_PHONE`, `COMPANY_EMAIL`, `COMPANY_WEBSITE`, `COMPANY_ADDRESS`, `COMPANY_LOGO_PATH`, `COMPANY_PRIMARY_COLOR` e `COMPANY_SECONDARY_COLOR`.
+- A aba `Configuracoes comerciais` permite ajustar dados da empresa, cores, validade padrao, condicoes de pagamento e observacoes usadas no PDF.
 - O envio suporta `manual`, `whatsapp`, `email` e `secure_link`.
 - Em desenvolvimento, envios por WhatsApp e e-mail sao simulados.
 - Envio manual nao marca como `sent` automaticamente, salvo quando `mark_as_sent=true`.
 - Em producao, envio por e-mail usa SMTP (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM_EMAIL`, `SMTP_FROM_NAME`).
-- Para WhatsApp ou link seguro, configure `PROPOSAL_PUBLIC_BASE_URL`; o sistema nao envia caminho local do PDF ao cliente.
+- Links seguros usam `/proposta/{token}` no frontend e `/public/proposals/{token}` no backend, com expiracao, revogacao, contagem de visualizacoes e download de PDF protegido por token.
+- O cliente pode responder digitalmente: interesse, aceite, recusa, pedido de ajuste ou falar com consultor.
+- A proposta registra linha do tempo em `proposal_events` e retornos comerciais em `proposal_followups`.
+- Em producao, configure `FRONTEND_ORIGINS` com o dominio publico do painel/site para gerar links corretos.
 
 ## LGPD
 
@@ -371,7 +388,7 @@ cd backend
 python -m unittest discover tests
 ```
 
-Os testes cobrem classificacao de intencao, gravidade, validacao do webhook, assinatura da Meta, deduplicacao, anexos, auditoria `WebhookEvent`, continuidade site -> WhatsApp, propostas comerciais, tabela de precos e falhas de envio.
+Os testes cobrem classificacao de intencao, gravidade, validacao do webhook, assinatura da Meta, deduplicacao, anexos, auditoria `WebhookEvent`, continuidade site -> WhatsApp, propostas comerciais, tabela de precos, link seguro, resposta digital, follow-ups, configuracoes comerciais e falhas de envio.
 
 ## Deploy sugerido
 
@@ -384,3 +401,4 @@ Os testes cobrem classificacao de intencao, gravidade, validacao do webhook, ass
 7. Configurar dominio, HTTPS, CORS restrito e WAF/rate limit.
 8. Configurar webhook oficial da Meta em `https://seu-dominio.com/webhook/whatsapp`.
 9. Cadastrar base de conhecimento oficial antes de habilitar respostas generativas.
+10. Configurar `FRONTEND_ORIGINS` com o dominio publico e validar `/proposta/{token}` antes de enviar propostas reais.

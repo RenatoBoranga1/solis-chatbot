@@ -272,6 +272,10 @@ class Proposal(Base, TimestampMixin):
         cascade="all, delete-orphan",
         order_by="ProposalItem.sort_order",
     )
+    share_links: Mapped[list["ProposalShareLink"]] = relationship(back_populates="proposal", cascade="all, delete-orphan")
+    customer_responses: Mapped[list["ProposalCustomerResponse"]] = relationship(back_populates="proposal", cascade="all, delete-orphan")
+    events: Mapped[list["ProposalEvent"]] = relationship(back_populates="proposal", cascade="all, delete-orphan")
+    followups: Mapped[list["ProposalFollowUp"]] = relationship(back_populates="proposal", cascade="all, delete-orphan")
 
 
 class ProposalItem(Base, TimestampMixin):
@@ -303,6 +307,85 @@ class ProposalPriceItem(Base, TimestampMixin):
     active: Mapped[bool] = mapped_column(Boolean, default=True, index=True, nullable=False)
     sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     notes: Mapped[str | None] = mapped_column(Text)
+
+
+class ProposalShareLink(Base, TimestampMixin):
+    __tablename__ = "proposal_share_links"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    proposal_id: Mapped[str] = mapped_column(ForeignKey("proposals.id"), index=True, nullable=False)
+    token: Mapped[str] = mapped_column(String(160), unique=True, index=True, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True, nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    views_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_viewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_by: Mapped[str | None] = mapped_column(ForeignKey("users.id"), index=True)
+
+    proposal: Mapped[Proposal] = relationship(back_populates="share_links")
+
+
+class ProposalCustomerResponse(Base):
+    __tablename__ = "proposal_customer_responses"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    proposal_id: Mapped[str] = mapped_column(ForeignKey("proposals.id"), index=True, nullable=False)
+    share_link_id: Mapped[str] = mapped_column(ForeignKey("proposal_share_links.id"), index=True, nullable=False)
+    response_type: Mapped[str] = mapped_column(String(40), index=True, nullable=False)
+    customer_name: Mapped[str | None] = mapped_column(String(180))
+    customer_email: Mapped[str | None] = mapped_column(String(255))
+    customer_phone: Mapped[str | None] = mapped_column(String(40))
+    message: Mapped[str | None] = mapped_column(Text)
+    ip_address: Mapped[str | None] = mapped_column(String(80))
+    user_agent: Mapped[str | None] = mapped_column(String(500))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    proposal: Mapped[Proposal] = relationship(back_populates="customer_responses")
+    share_link: Mapped[ProposalShareLink] = relationship()
+
+
+class ProposalEvent(Base):
+    __tablename__ = "proposal_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    proposal_id: Mapped[str] = mapped_column(ForeignKey("proposals.id"), index=True, nullable=False)
+    event_type: Mapped[str] = mapped_column(String(80), index=True, nullable=False)
+    channel: Mapped[str | None] = mapped_column(String(40), index=True)
+    details: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, index=True, nullable=False)
+
+    proposal: Mapped[Proposal] = relationship(back_populates="events")
+
+
+class ProposalFollowUp(Base, TimestampMixin):
+    __tablename__ = "proposal_followups"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    proposal_id: Mapped[str] = mapped_column(ForeignKey("proposals.id"), index=True, nullable=False)
+    due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True, nullable=False)
+    status: Mapped[str] = mapped_column(String(40), index=True, default="pending", nullable=False)
+    channel: Mapped[str] = mapped_column(String(40), index=True, default="manual", nullable=False)
+    note: Mapped[str | None] = mapped_column(Text)
+    assigned_to: Mapped[str | None] = mapped_column(ForeignKey("users.id"), index=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    proposal: Mapped[Proposal] = relationship(back_populates="followups")
+
+
+class CompanySettings(Base, TimestampMixin):
+    __tablename__ = "company_settings"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    company_name: Mapped[str] = mapped_column(String(180), nullable=False)
+    company_phone: Mapped[str | None] = mapped_column(String(60))
+    company_email: Mapped[str | None] = mapped_column(String(255))
+    company_website: Mapped[str | None] = mapped_column(String(800))
+    company_address: Mapped[str | None] = mapped_column(Text)
+    company_logo_url: Mapped[str | None] = mapped_column(String(800))
+    primary_color: Mapped[str] = mapped_column(String(20), default="#FFCC33", nullable=False)
+    secondary_color: Mapped[str] = mapped_column(String(20), default="#0B1F33", nullable=False)
+    default_payment_conditions: Mapped[str | None] = mapped_column(Text)
+    default_proposal_validity_days: Mapped[int] = mapped_column(Integer, default=7, nullable=False)
+    default_proposal_notes: Mapped[str | None] = mapped_column(Text)
 
 
 class KnowledgeBaseArticle(Base, TimestampMixin):
