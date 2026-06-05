@@ -29,6 +29,7 @@ Reduzir digitacao manual e melhorar a precisao do pre-dimensionamento. O sistema
 - `source`, que indica o provedor tecnico do anexo;
 - `origin`, que indica a entrada de negocio (`chatbot`, `whatsapp`, `panel`, `manual_text` ou `api`);
 - distribuidora, unidade consumidora, cidade/UF, referencia e vencimento;
+- nome do titular, endereco, bairro, CEP, unidade/codigo do cliente e bandeira tarifaria;
 - consumo atual, valor atual, medias e estimativas;
 - score de confianca;
 - campos faltantes;
@@ -133,11 +134,48 @@ O parser busca:
 - historico mensal;
 - distribuidora;
 - unidade consumidora;
+- endereco, bairro, CEP e bloco real do cliente;
+- bandeira tarifaria, sem confundir `Verde`/`Amarela`/`Vermelha` com unidade;
 - cidade/UF;
 - referencia e vencimento;
 - CPF/CNPJ mascarado.
 
 Novos parsers podem ser adicionados em `backend/app/services/energy_bill_parsers/`.
+
+### Regras especificas CPFL
+
+Contas CPFL podem trazer no topo um cabecalho da distribuidora com `CPFL Energia`, `DANF3E`, razao social, endereco institucional, CNPJ, inscricao estadual e canais de atendimento. Esses dados nao pertencem ao cliente e nao devem preencher nome, endereco, cidade ou unidade consumidora.
+
+O parser CPFL agora procura o bloco real do cliente pelo padrao:
+
+```text
+NOME DO CLIENTE
+ENDERECO
+BAIRRO
+CEP CIDADE UF
+```
+
+Exemplo aceito:
+
+```text
+RENATO DE OLIVEIRA BORANGA
+R ARMANDO CEZARIO CAMPOS 41
+CENTRO
+18970-000 CHAVANTES SP
+```
+
+Esse bloco preenche `customer_name`, `customer_address`, `customer_district`, `customer_postal_code`, `city` e `state`. Linhas com `CPFL`, `DANF`, `Companhia`, `Energia S.A.`, `CNPJ`, `Inscricao Estadual`, `Rua Vigato`, `atendimento`, `ouvidoria`, `agencia` ou `sede` sao descartadas como cabecalho da distribuidora.
+
+O historico CPFL aceita formatos como:
+
+```text
+JAN/2026 320 kWh
+FEV 340
+MAR 2026 360 kWh
+01/2026 320 kWh
+```
+
+O parser deduplica meses e ignora valores monetarios, tarifas, CNPJ/CPF, CEP e datas de vencimento. Quando o bloco de `Historico de consumo` existe, ele vira a fonte principal da media. Se houver 12 meses ou mais, `parsed_fields.average_source=history_12_months`; com 3 a 11 meses, `history_partial`; sem historico, a media fica limitada ao consumo atual ou nula.
 
 ## Precisao e descarte conservador
 
@@ -156,9 +194,15 @@ Regras importantes:
 O campo `parsed_fields` registra informacoes de auditoria para revisao:
 
 - `parser`;
+- `cpfl_rules_applied`;
 - `tariff_flag`;
 - `customer_unit_number`;
+- `customer_block_detected`;
+- `customer_block_lines`;
+- `history_detection`;
 - `months_detected`;
+- `average_source`;
+- `confidence_inputs`;
 - `discarded_fields`;
 - `anchors`;
 - `source_snippets`, sempre mascarado;
@@ -227,11 +271,18 @@ Ao aplicar a extracao ao lead, o sistema grava em `lead.extra`:
 - `current_consumption_kwh`;
 - `average_bill_amount`;
 - `current_bill_amount`;
+- `customer_unit_number`;
+- `customer_address`;
+- `customer_district`;
+- `customer_postal_code`;
+- `tariff_flag`;
+- `history_months_detected`;
+- `average_source`;
 - `estimated_system_power_kwp`;
 - `estimated_monthly_generation_kwh`;
 - `utility_company`.
 
-Ao gerar proposta, o backend prefere `average_consumption_kwh` para estimar geracao e potencia. Isso melhora a selecao automatica de `proposal_kits`.
+Ao gerar proposta, o backend prefere `average_consumption_kwh` vindo de historico da conta. Se nao houver historico, usa o consumo atual; se tambem nao houver, cai para valor medio da conta/valor atual. As notas internas da proposta indicam se o pre-dimensionamento veio de `history_12_months`, `history_partial` ou `current_consumption_only`.
 
 A proposta continua `draft` e deve ser revisada antes de envio.
 

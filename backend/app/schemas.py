@@ -240,6 +240,11 @@ class EnergyBillParsedData(BaseModel):
     customer_name: str | None = None
     customer_document_masked: str | None = None
     installation_number: str | None = None
+    customer_address: str | None = None
+    customer_district: str | None = None
+    customer_postal_code: str | None = None
+    customer_unit_number: str | None = None
+    tariff_flag: str | None = None
     city: str | None = None
     state: str | None = None
     reference_month: str | None = None
@@ -272,6 +277,11 @@ class EnergyBillExtractionUpdate(BaseModel):
     customer_name: str | None = None
     customer_document_masked: str | None = None
     installation_number: str | None = None
+    customer_address: str | None = None
+    customer_district: str | None = None
+    customer_postal_code: str | None = None
+    customer_unit_number: str | None = None
+    tariff_flag: str | None = None
     city: str | None = None
     state: str | None = Field(default=None, max_length=2)
     reference_month: str | None = None
@@ -296,6 +306,11 @@ class EnergyBillExtractionConfirm(BaseModel):
     distributor: str | None = None
     customer_name: str | None = None
     installation_number: str | None = None
+    customer_address: str | None = None
+    customer_district: str | None = None
+    customer_postal_code: str | None = None
+    customer_unit_number: str | None = None
+    tariff_flag: str | None = None
     city: str | None = None
     state: str | None = Field(default=None, max_length=2)
     reference_month: str | None = None
@@ -323,6 +338,11 @@ class EnergyBillExtractionOut(BaseModel):
     customer_name: str | None
     customer_document_masked: str | None
     installation_number: str | None
+    customer_address: str | None
+    customer_district: str | None
+    customer_postal_code: str | None
+    customer_unit_number: str | None
+    tariff_flag: str | None
     city: str | None
     state: str | None
     reference_month: str | None

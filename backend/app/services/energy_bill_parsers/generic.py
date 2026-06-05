@@ -67,6 +67,10 @@ class GenericEnergyBillParser:
         "informacoes fiscais",
         "companhia",
         "distribuidora",
+        "danf",
+        "energia s.a",
+        "energia sa",
+        "rua vigato",
     }
     BILL_AMOUNT_ANCHORS = [
         "total a pagar",
@@ -124,8 +128,10 @@ class GenericEnergyBillParser:
         result.distributor = self._extract_distributor(text) or metadata.get("distributor")
         result.customer_name = self._extract_customer_name(text, debug) or metadata.get("customer_name")
         result.customer_document_masked = self._extract_document(text)
-        result.parsed_fields["tariff_flag"] = self._extract_tariff_flag(text, debug)
+        result.tariff_flag = self._extract_tariff_flag(text, debug)
+        result.parsed_fields["tariff_flag"] = result.tariff_flag
         result.installation_number = self._extract_installation_number(text, debug) or metadata.get("installation_number")
+        result.customer_unit_number = result.installation_number
         result.city, result.state = self._extract_city_state(text, metadata, debug)
         result.reference_month = self._extract_reference_month(text)
         result.due_date = self._extract_due_date(text)
@@ -138,6 +144,11 @@ class GenericEnergyBillParser:
 
         debug["has_history"] = bool(result.history)
         debug["months_detected"] = len(result.history) if result.history else (1 if result.current_consumption_kwh is not None else 0)
+        debug["history_detection"] = {
+            "months_detected": debug["months_detected"],
+            "source": "generic_history" if result.history else ("current_consumption_only" if result.current_consumption_kwh is not None else "not_found"),
+            "items": [item.__dict__.copy() for item in result.history[:12]],
+        }
         debug["metadata_keys"] = sorted(metadata.keys())
         debug["customer_unit_number"] = result.installation_number
         result.parsed_fields = {
@@ -147,6 +158,7 @@ class GenericEnergyBillParser:
             "months_detected": debug["months_detected"],
             "metadata_keys": debug["metadata_keys"],
             "customer_unit_number": debug["customer_unit_number"],
+            "history_detection": debug["history_detection"],
             "discarded_fields": debug["discarded_fields"],
             "anchors": debug["anchors"],
             "source_snippets": debug["source_snippets"],

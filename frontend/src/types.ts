@@ -360,6 +360,11 @@ export type EnergyBillParsedData = {
   customer_name: string | null;
   customer_document_masked: string | null;
   installation_number: string | null;
+  customer_address: string | null;
+  customer_district: string | null;
+  customer_postal_code: string | null;
+  customer_unit_number: string | null;
+  tariff_flag: string | null;
   city: string | null;
   state: string | null;
   reference_month: string | null;

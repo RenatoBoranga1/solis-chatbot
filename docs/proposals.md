@@ -151,7 +151,14 @@ Exemplo com R$ 350,00 de conta media:
 
 A proposta continua `draft`. O kit e uma recomendacao, nao um dimensionamento definitivo. Revise telhado, sombreamento, padrao de entrada, concessionaria, estrutura, valores e condicoes antes de enviar.
 
-Quando houver `average_consumption_kwh` vindo do Leitor Inteligente de Conta de Energia, esse consumo medio tem prioridade sobre a estimativa por valor em reais. Isso melhora a escolha de kit, mas continua exigindo revisao humana.
+Quando houver `average_consumption_kwh` vindo do Leitor Inteligente de Conta de Energia, esse consumo medio tem prioridade sobre a estimativa por valor em reais. A prioridade de pre-dimensionamento passa a ser:
+
+1. media extraida do historico mensal da conta (`average_source=history_12_months` ou `history_partial`);
+2. consumo atual da fatura quando o historico nao foi identificado (`current_consumption_only`);
+3. valor medio da conta informado no lead;
+4. valor atual da fatura, quando for o unico dado confiavel.
+
+As notas internas da proposta indicam quando o consumo veio do historico da conta e quantos meses foram detectados. Isso melhora a escolha de kit, mas continua exigindo revisao humana, validacao tecnica e analise comercial antes do envio.
 
 Guia completo: [`proposal-kits.md`](proposal-kits.md).
 

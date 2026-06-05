@@ -86,6 +86,42 @@ Abr/2026 24 kWh
 Mai/2026 26 kWh
 """
 
+CPFL_CUSTOMER_BLOCK_TEXT = """
+CPFL Energia
+DANF3E - Documento Auxiliar da Nota Fiscal de Energia Eletrica
+Companhia Jaguari de Energia S.A.
+Rua Vigato, 1620 - Jaguariuna SP
+CNPJ 12.345.678/0001-99
+Inscricao Estadual 123456789
+Atendimento CPFL e Ouvidoria
+
+RENATO DE OLIVEIRA BORANGA
+R ARMANDO CEZARIO CAMPOS 41
+CENTRO
+18970-000 CHAVANTES SP
+
+Codigo do cliente: 987654321
+Referencia: 05/2026
+Vencimento: 12/06/2026
+Consumo faturado: 380 kWh
+Bandeira Verde
+Total a pagar R$ 421,90
+
+Historico de consumo dos ultimos meses
+JAN/2026 320 kWh
+FEV 340
+MAR/2026 360 kWh
+ABR 2026 380 kWh
+MAI/2026 400 kWh
+JUN/2025 410
+JUL/2025 430 kWh
+AGO 2025 420 kWh
+SET/2025 390 kWh
+OUT 2025 370 kWh
+NOV/2025 350 kWh
+DEZ 2025 330 kWh
+"""
+
 
 def contains_nul(value) -> bool:
     if isinstance(value, str):
@@ -325,6 +361,43 @@ class EnergyBillParserTest(unittest.TestCase):
         self.assertEqual(result.average_bill_amount, 89.70)
         self.assertEqual(result.parsed_fields["anchors"]["bill_amount"], "total a pagar")
         self.assertGreaterEqual(result.confidence_score, 0.8)
+
+    def test_cpfl_extracts_customer_block_and_12_month_history(self):
+        result = EnergyBillExtractorService(FakeDb()).parse_energy_bill_text(CPFL_CUSTOMER_BLOCK_TEXT)
+
+        self.assertEqual(result.customer_name, "RENATO DE OLIVEIRA BORANGA")
+        self.assertEqual(result.customer_address, "R ARMANDO CEZARIO CAMPOS 41")
+        self.assertEqual(result.customer_district, "CENTRO")
+        self.assertEqual(result.customer_postal_code, "18970-000")
+        self.assertEqual(result.city, "CHAVANTES")
+        self.assertEqual(result.state, "SP")
+        self.assertEqual(result.installation_number, "987654321")
+        self.assertEqual(result.customer_unit_number, "987654321")
+        self.assertEqual(result.tariff_flag, "Verde")
+        self.assertEqual(result.current_bill_amount, 421.90)
+        self.assertEqual(len(result.history), 12)
+        self.assertEqual(result.average_consumption_kwh, 375)
+        self.assertEqual(result.parsed_fields["average_source"], "history_12_months")
+        self.assertEqual(result.parsed_fields["months_detected"], 12)
+        self.assertTrue(result.parsed_fields["customer_block_detected"])
+        self.assertEqual(result.parsed_fields["history_detection"]["source"], "historico_cpfl")
+        self.assertNotIn("JAGUARIUNA", result.city)
+        self.assertGreaterEqual(result.confidence_score, settings.energy_bill_min_confidence_auto_apply)
+
+    def test_extract_from_file_persists_cpfl_customer_fields(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "cpfl-real.txt"
+            path.write_text(CPFL_CUSTOMER_BLOCK_TEXT, encoding="utf-8")
+            extraction = EnergyBillExtractorService(FakeDb()).extract_from_file(str(path))
+
+        self.assertEqual(extraction.customer_name, "RENATO DE OLIVEIRA BORANGA")
+        self.assertEqual(extraction.customer_address, "R ARMANDO CEZARIO CAMPOS 41")
+        self.assertEqual(extraction.customer_district, "CENTRO")
+        self.assertEqual(extraction.customer_postal_code, "18970-000")
+        self.assertEqual(extraction.customer_unit_number, "987654321")
+        self.assertEqual(extraction.tariff_flag, "Verde")
+        self.assertEqual(extraction.parsed_fields["average_source"], "history_12_months")
+        self.assertEqual(len(extraction.history), 12)
 
     def test_extraction_under_80_percent_stays_needs_review(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -709,7 +782,7 @@ class EnergyBillServiceTest(unittest.TestCase):
             confidence_score=extraction.confidence_score,
             needs_human_review=False,
             missing_fields=[],
-            parsed_fields={},
+            parsed_fields={"average_source": "history_partial", "months_detected": len(extraction.history)},
             raw_extraction={},
             created_at=utc_now(),
         )
@@ -725,6 +798,7 @@ class EnergyBillServiceTest(unittest.TestCase):
         self.assertEqual(proposal.recommended_kit_name, "Kit 3,30 kWp")
         self.assertEqual(float(proposal.estimated_monthly_generation_kwh), 460)
         self.assertIn("Consumo medio", proposal.internal_notes)
+        self.assertIn("historico extraido da conta de energia", proposal.internal_notes)
 
 
 class EnergyBillRoutesTest(unittest.TestCase):

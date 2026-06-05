@@ -21,6 +21,11 @@ class EnergyBillParseResult:
     customer_name: str | None = None
     customer_document_masked: str | None = None
     installation_number: str | None = None
+    customer_address: str | None = None
+    customer_district: str | None = None
+    customer_postal_code: str | None = None
+    customer_unit_number: str | None = None
+    tariff_flag: str | None = None
     city: str | None = None
     state: str | None = None
     reference_month: str | None = None

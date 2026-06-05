@@ -1374,7 +1374,12 @@ function EnergyBillsView({
           <strong>Previa da leitura</strong>
           <div className="kit-summary-grid">
             <span><small>Distribuidora</small><strong>{preview.distributor ?? "A revisar"}</strong></span>
+            <span><small>Cliente</small><strong>{preview.customer_name ?? "A revisar"}</strong></span>
+            <span><small>Cidade/UF</small><strong>{[preview.city, preview.state].filter(Boolean).join(" / ") || "A revisar"}</strong></span>
+            <span><small>Unidade</small><strong>{preview.customer_unit_number ?? preview.installation_number ?? "A revisar"}</strong></span>
             <span><small>Consumo medio</small><strong>{formatMeasurement(preview.average_consumption_kwh, "kWh/mes", 0)}</strong></span>
+            <span><small>Media por</small><strong>{energyBillAverageSourceLabel(preview.parsed_fields)}</strong></span>
+            <span><small>Meses detectados</small><strong>{energyBillMonthsDetected(preview.parsed_fields)}</strong></span>
             <span className={!preview.current_bill_amount ? "energy-bill-value--review" : ""}><small>Conta atual</small><strong>{formatOptionalCurrency(preview.current_bill_amount)}</strong></span>
             <span><small>Potencia estimada</small><strong>{formatMeasurement(preview.estimated_system_power_kwp, "kWp", 3)}</strong></span>
             <span><small>Confianca</small><strong>{Math.round((preview.confidence_score ?? 0) * 100)}%</strong></span>
@@ -1447,6 +1452,22 @@ function EnergyBillsView({
                     <input defaultValue={extraction.installation_number ?? ""} onBlur={(event) => onUpdate(extraction.id, { installation_number: event.target.value || null })} />
                   </label>
                   <label>
+                    Unidade/cliente CPFL
+                    <input defaultValue={extraction.customer_unit_number ?? ""} onBlur={(event) => onUpdate(extraction.id, { customer_unit_number: event.target.value || null })} />
+                  </label>
+                  <label>
+                    Endereco
+                    <input defaultValue={extraction.customer_address ?? ""} onBlur={(event) => onUpdate(extraction.id, { customer_address: event.target.value || null })} />
+                  </label>
+                  <label>
+                    Bairro
+                    <input defaultValue={extraction.customer_district ?? ""} onBlur={(event) => onUpdate(extraction.id, { customer_district: event.target.value || null })} />
+                  </label>
+                  <label>
+                    CEP
+                    <input defaultValue={extraction.customer_postal_code ?? ""} onBlur={(event) => onUpdate(extraction.id, { customer_postal_code: event.target.value || null })} />
+                  </label>
+                  <label>
                     Cidade
                     <input defaultValue={extraction.city ?? ""} onBlur={(event) => onUpdate(extraction.id, { city: event.target.value || null })} />
                   </label>
@@ -1470,13 +1491,22 @@ function EnergyBillsView({
                     Conta media
                     <input type="number" defaultValue={extraction.average_bill_amount ?? ""} onBlur={(event) => onUpdate(extraction.id, { average_bill_amount: numberOrNull(event.target.value) })} />
                   </label>
+                  <label>
+                    Bandeira tarifaria
+                    <input defaultValue={extraction.tariff_flag ?? ""} onBlur={(event) => onUpdate(extraction.id, { tariff_flag: event.target.value || null })} />
+                  </label>
                 </div>
                 <div className="kit-summary-grid">
                   <span><small>Potencia estimada</small><strong>{formatMeasurement(extraction.estimated_system_power_kwp, "kWp", 3)}</strong></span>
                   <span><small>Geracao estimada</small><strong>{formatMeasurement(extraction.estimated_monthly_generation_kwh, "kWh/mes", 0)}</strong></span>
                   <span><small>Economia estimada</small><strong>{formatOptionalCurrency(extraction.estimated_monthly_savings, "A validar")}</strong></span>
                   <span><small>Documento</small><strong>{extraction.customer_document_masked ?? "Nao exibido"}</strong></span>
-                  <span><small>Bandeira</small><strong>{energyBillTariffFlag(extraction.parsed_fields) ?? "Nao identificada"}</strong></span>
+                  <span><small>Bandeira</small><strong>{extraction.tariff_flag ?? energyBillTariffFlag(extraction.parsed_fields) ?? "Nao identificada"}</strong></span>
+                  <span><small>Endereco</small><strong>{extraction.customer_address ?? "Nao identificado"}</strong></span>
+                  <span><small>Bairro</small><strong>{extraction.customer_district ?? "Nao identificado"}</strong></span>
+                  <span><small>CEP</small><strong>{extraction.customer_postal_code ?? "Nao identificado"}</strong></span>
+                  <span><small>Media por</small><strong>{energyBillAverageSourceLabel(extraction.parsed_fields)}</strong></span>
+                  <span><small>Meses detectados</small><strong>{energyBillMonthsDetected(extraction.parsed_fields)}</strong></span>
                   <span><small>Origem</small><strong>{originLabel(extraction.origin)}</strong></span>
                   <span><small>Conversa</small><strong>{extraction.conversation_id ?? "Sem vinculo"}</strong></span>
                   <span><small>Metodo</small><strong>{ocr.method}</strong></span>
@@ -1531,7 +1561,7 @@ function energyBillReviewReasons(extraction: EnergyBillParsedData) {
   const reasons = new Set(configuredReasons);
   if (!extraction.current_bill_amount && !extraction.average_bill_amount) reasons.add("Valor da conta nao encontrado.");
   if (!extraction.city || !extraction.state) reasons.add("Cidade/endereco precisa de revisao.");
-  if (!extraction.installation_number) reasons.add("Unidade consumidora nao identificada com seguranca.");
+  if (!extraction.installation_number && !extraction.customer_unit_number) reasons.add("Unidade consumidora nao identificada com seguranca.");
   if (Number(extraction.confidence_score ?? 0) < 0.8) reasons.add("Confianca abaixo de 80%.");
   return Array.from(reasons);
 }
@@ -1545,7 +1575,24 @@ function energyBillTariffFlag(parsedFields: Record<string, unknown>) {
 }
 
 function energyBillDebugPayload(parsedFields: Record<string, unknown>) {
-  const keys = ["parser", "tariff_flag", "customer_unit_number", "months_detected", "discarded_fields", "anchors", "source_snippets", "review_warnings", "review_reasons"];
+  const keys = [
+    "parser",
+    "cpfl_rules_applied",
+    "tariff_flag",
+    "customer_unit_number",
+    "customer_block_detected",
+    "customer_block_lines",
+    "history_detection",
+    "months_detected",
+    "average_source",
+    "confidence_inputs",
+    "parser_confidence_inputs",
+    "discarded_fields",
+    "anchors",
+    "source_snippets",
+    "review_warnings",
+    "review_reasons",
+  ];
   return keys.reduce<Record<string, unknown>>((payload, key) => {
     const value = parsedFields?.[key];
     if (value !== undefined && value !== null && (!(Array.isArray(value)) || value.length > 0)) {
@@ -1553,6 +1600,27 @@ function energyBillDebugPayload(parsedFields: Record<string, unknown>) {
     }
     return payload;
   }, {});
+}
+
+function energyBillMonthsDetected(parsedFields: Record<string, unknown>) {
+  const value = parsedFields?.months_detected;
+  const fromHistory = parsedFields?.history_detection;
+  const historyMonths = typeof fromHistory === "object" && fromHistory !== null && "months_detected" in fromHistory ? Number((fromHistory as Record<string, unknown>).months_detected) : NaN;
+  const months = typeof value === "number" ? value : Number(value ?? historyMonths);
+  return Number.isFinite(months) ? String(months) : "0";
+}
+
+function energyBillAverageSourceLabel(parsedFields: Record<string, unknown>) {
+  const value = String(parsedFields?.average_source ?? (typeof parsedFields?.history_detection === "object" && parsedFields.history_detection !== null ? (parsedFields.history_detection as Record<string, unknown>).source : "") ?? "");
+  const labels: Record<string, string> = {
+    history_12_months: "Historico 12 meses",
+    history_partial: "Historico parcial",
+    historico_cpfl: "Historico CPFL",
+    generic_history: "Historico",
+    current_consumption_only: "Consumo atual",
+    not_found: "Nao encontrado",
+  };
+  return labels[value] ?? (value || "Nao informado");
 }
 
 function EnergyBillStatusPill({ status }: { status: string }) {

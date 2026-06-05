@@ -164,6 +164,13 @@ class ProposalService:
                 internal_notes += f" Motivo da selecao: {kit_selection.selection_reason}"
         if average_consumption_kwh:
             internal_notes += f" Consumo medio usado no pre-dimensionamento: {average_consumption_kwh:.0f} kWh/mes."
+            average_source = str(collected.get("average_source") or "")
+            history_months = self._float_or_none(collected.get("history_months_detected"))
+            if average_source in {"history_12_months", "history_partial"}:
+                months_text = f" com {int(history_months)} meses detectados" if history_months else ""
+                internal_notes += f" Pre-dimensionamento baseado no historico extraido da conta de energia{months_text}; validar no projeto tecnico final."
+            elif average_source == "current_consumption_only":
+                internal_notes += " Historico nao foi identificado; consumo medio veio do consumo atual da fatura e deve ser revisado."
         elif active_price_items:
             internal_notes += " Valores carregados da tabela de precos configuravel. Revise antes de enviar."
         else:

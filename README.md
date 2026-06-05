@@ -23,7 +23,8 @@ O projeto esta organizado como um monorepo simples:
 - Transferencia para humano em casos graves, complexos, comerciais estrategicos ou sem resposta confiavel.
 - Base de conhecimento administravel e pronta para RAG.
 - Kits fotovoltaicos configuraveis com simulador e selecao automatica para pre-propostas revisaveis.
-- Leitor Inteligente de Conta de Energia com extracao de consumo, valor, historico, confianca e revisao humana.
+- Leitor Inteligente de Conta de Energia com extracao de consumo, valor, historico, confianca, dados do cliente e revisao humana.
+- Parser CPFL com separacao entre cabecalho da distribuidora e bloco real do cliente, incluindo CEP, cidade/UF, endereco, unidade e historico de 12 meses.
 - Base multimidia com videos oficiais, PDFs, manuais e links de apoio seguros.
 - Registro de perguntas sem resposta.
 - Painel com dashboard, conversas, leads, chamados e artigos.
@@ -178,6 +179,8 @@ Contas de energia:
 - `POST /energy-bills/{extraction_id}/generate-proposal`
 - `POST /energy-bills/{extraction_id}/discard`
 - `POST /energy-bills/parse-text`
+
+O leitor de contas salva campos estruturados como `customer_address`, `customer_district`, `customer_postal_code`, `customer_unit_number`, `tariff_flag`, historico mensal e `average_source`. Para CPFL, o parser prioriza o bloco `CEP CIDADE UF` do cliente e descarta cabecalhos com `CPFL`, `DANF`, `Companhia`, `CNPJ`, atendimento, ouvidoria e endereco institucional. Veja o guia em [`docs/energy-bill-extraction.md`](docs/energy-bill-extraction.md).
 
 Tickets:
 

@@ -331,32 +331,55 @@ class EnergyBillExtractorService:
             **result.parsed_fields,
             **self._extraction_metadata_fields(metadata),
             "review_reasons": review_reasons,
+            "months_detected": stats["months_detected"],
+            "average_source": stats["average_source"],
             "parser_confidence_inputs": {
                 "missing_fields": result.missing_fields,
                 "history_count": len(result.history),
+                "has_customer_block": bool(result.parsed_fields.get("customer_block_detected")),
+                "has_postal_city": bool(result.customer_postal_code and result.city and result.state),
+                "has_bill_amount": result.current_bill_amount is not None or result.average_bill_amount is not None,
                 "discarded_fields_count": len(result.parsed_fields.get("discarded_fields") or {}),
             },
         }
+        result.parsed_fields["confidence_inputs"] = result.parsed_fields["parser_confidence_inputs"]
         return result
 
     def calculate_consumption_statistics(
         self,
         history: list[ConsumptionHistoryItem] | list[dict[str, Any]],
         current_consumption: float | None,
-    ) -> dict[str, float | None]:
+    ) -> dict[str, Any]:
         values: list[float] = []
         for item in history:
             value = item.consumption_kwh if isinstance(item, ConsumptionHistoryItem) else item.get("consumption_kwh")
             if value is not None:
                 values.append(float(value))
-        if current_consumption is not None and not values:
-            values.append(float(current_consumption))
         if not values:
-            return {"average_consumption_kwh": None, "min_consumption_kwh": None, "max_consumption_kwh": None}
+            if current_consumption is not None:
+                value = float(current_consumption)
+                return {
+                    "average_consumption_kwh": round(value, 2),
+                    "min_consumption_kwh": round(value, 2),
+                    "max_consumption_kwh": round(value, 2),
+                    "months_detected": 1,
+                    "average_source": "current_consumption_only",
+                }
+            return {
+                "average_consumption_kwh": None,
+                "min_consumption_kwh": None,
+                "max_consumption_kwh": None,
+                "months_detected": 0,
+                "average_source": "not_found",
+            }
+        months_detected = len(values)
+        source = "history_12_months" if months_detected >= 12 else "history_partial"
         return {
             "average_consumption_kwh": round(sum(values) / len(values), 2),
             "min_consumption_kwh": round(min(values), 2),
             "max_consumption_kwh": round(max(values), 2),
+            "months_detected": months_detected,
+            "average_source": source,
         }
 
     def estimate_solar_system(
@@ -411,6 +434,13 @@ class EnergyBillExtractorService:
                         "current_bill_amount": self._float_or_none(extraction.current_bill_amount),
                         "utility_company": extraction.distributor or collected.get("utility_company"),
                         "installation_number": extraction.installation_number,
+                        "customer_unit_number": extraction.customer_unit_number or extraction.installation_number,
+                        "customer_address": extraction.customer_address,
+                        "customer_district": extraction.customer_district,
+                        "customer_postal_code": extraction.customer_postal_code,
+                        "tariff_flag": extraction.tariff_flag,
+                        "history_months_detected": (extraction.parsed_fields or {}).get("months_detected"),
+                        "average_source": (extraction.parsed_fields or {}).get("average_source"),
                         "city": extraction.city or collected.get("city"),
                         "state": extraction.state or collected.get("state"),
                     }
@@ -598,6 +628,11 @@ class EnergyBillExtractorService:
             customer_name=self._text_or_none(result.customer_name, 180),
             customer_document_masked=self._text_or_none(result.customer_document_masked, 80),
             installation_number=self._text_or_none(result.installation_number, 120),
+            customer_address=self._text_or_none(result.customer_address, 260),
+            customer_district=self._text_or_none(result.customer_district, 120),
+            customer_postal_code=self._text_or_none(result.customer_postal_code, 20),
+            customer_unit_number=self._text_or_none(result.customer_unit_number or result.installation_number, 120),
+            tariff_flag=self._text_or_none(result.tariff_flag or result.parsed_fields.get("tariff_flag"), 80),
             city=self._text_or_none(result.city, 120),
             state=self._text_or_none(result.state, 2),
             reference_month=self._text_or_none(result.reference_month, 20),
@@ -694,6 +729,13 @@ class EnergyBillExtractorService:
         extraction.estimated_system_power_kwp = estimate["estimated_system_power_kwp"]
         extraction.estimated_monthly_generation_kwh = estimate["estimated_monthly_generation_kwh"]
         extraction.estimated_monthly_savings = estimate["estimated_monthly_savings"]
+        extraction.parsed_fields = sanitize_data_for_database(
+            {
+                **(extraction.parsed_fields or {}),
+                "months_detected": stats["months_detected"],
+                "average_source": stats["average_source"],
+            }
+        )
 
     def _fill_extraction_from_result(
         self,
@@ -707,6 +749,11 @@ class EnergyBillExtractorService:
         extraction.customer_name = self._text_or_none(result.customer_name, 180)
         extraction.customer_document_masked = self._text_or_none(result.customer_document_masked, 80)
         extraction.installation_number = self._text_or_none(result.installation_number, 120)
+        extraction.customer_address = self._text_or_none(result.customer_address, 260)
+        extraction.customer_district = self._text_or_none(result.customer_district, 120)
+        extraction.customer_postal_code = self._text_or_none(result.customer_postal_code, 20)
+        extraction.customer_unit_number = self._text_or_none(result.customer_unit_number or result.installation_number, 120)
+        extraction.tariff_flag = self._text_or_none(result.tariff_flag or result.parsed_fields.get("tariff_flag"), 80)
         extraction.city = self._text_or_none(result.city, 120)
         extraction.state = self._text_or_none(result.state, 2)
         extraction.reference_month = self._text_or_none(result.reference_month, 20)
@@ -780,6 +827,13 @@ class EnergyBillExtractorService:
                 "average_bill": self._float_or_none(extraction.average_bill_amount or extraction.current_bill_amount),
                 "utility_company": extraction.distributor or collected.get("utility_company"),
                 "installation_number": extraction.installation_number,
+                "customer_unit_number": extraction.customer_unit_number or extraction.installation_number,
+                "customer_address": extraction.customer_address,
+                "customer_district": extraction.customer_district,
+                "customer_postal_code": extraction.customer_postal_code,
+                "tariff_flag": extraction.tariff_flag,
+                "history_months_detected": (extraction.parsed_fields or {}).get("months_detected"),
+                "average_source": (extraction.parsed_fields or {}).get("average_source"),
                 "city": extraction.city or collected.get("city"),
                 "state": extraction.state or collected.get("state"),
             }
@@ -830,6 +884,13 @@ class EnergyBillExtractorService:
                 "average_bill_amount": self._float_or_none(extraction.average_bill_amount),
                 "current_bill_amount": self._float_or_none(extraction.current_bill_amount),
                 "installation_number": extraction.installation_number,
+                "customer_unit_number": extraction.customer_unit_number or extraction.installation_number,
+                "customer_address": extraction.customer_address,
+                "customer_district": extraction.customer_district,
+                "customer_postal_code": extraction.customer_postal_code,
+                "tariff_flag": extraction.tariff_flag,
+                "history_months_detected": (extraction.parsed_fields or {}).get("months_detected"),
+                "average_source": (extraction.parsed_fields or {}).get("average_source"),
                 "distributor": extraction.distributor,
                 "utility_company": extraction.distributor,
                 "estimated_system_power_kwp": self._float_or_none(extraction.estimated_system_power_kwp),
@@ -875,7 +936,7 @@ class EnergyBillExtractorService:
     def _missing_fields(self, result: EnergyBillParseResult) -> list[str]:
         checks = {
             "distribuidora": result.distributor,
-            "numero da instalacao": result.installation_number,
+            "numero da instalacao": result.installation_number or result.customer_unit_number,
             "consumo em kWh": result.current_consumption_kwh or result.average_consumption_kwh,
             "valor da conta": result.current_bill_amount or result.average_bill_amount,
             "cidade/UF": result.city and result.state,
@@ -886,18 +947,24 @@ class EnergyBillExtractorService:
         score = 0.08
         if result.distributor:
             score += 0.1
-        if result.installation_number:
+        if result.installation_number or result.customer_unit_number:
             score += 0.15
         if result.current_consumption_kwh:
             score += 0.2
         if result.current_bill_amount:
             score += 0.2
-        if len(result.history) >= 3:
+        if len(result.history) >= 12:
+            score += 0.17
+        elif len(result.history) >= 3:
             score += 0.13
         elif result.history:
             score += 0.06
         if result.city and result.state:
             score += 0.12
+        if result.customer_name and result.parsed_fields.get("customer_block_detected"):
+            score += 0.06
+        if result.customer_postal_code and result.customer_address:
+            score += 0.06
         discarded_fields = result.parsed_fields.get("discarded_fields") if isinstance(result.parsed_fields, dict) else {}
         if discarded_fields:
             score -= min(0.18, 0.06 * len(discarded_fields))
@@ -905,7 +972,7 @@ class EnergyBillExtractorService:
             score -= 0.05
         if not (result.city and result.state):
             score -= 0.04
-        if not result.installation_number:
+        if not (result.installation_number or result.customer_unit_number):
             score -= 0.04
         return round(max(0, min(score, 0.99)), 4)
 
@@ -915,8 +982,12 @@ class EnergyBillExtractorService:
             reasons.append("Valor da conta nao encontrado.")
         if not (result.city and result.state):
             reasons.append("Cidade/endereco precisa de revisao.")
-        if not result.installation_number:
+        if not (result.installation_number or result.customer_unit_number):
             reasons.append("Unidade consumidora nao identificada com seguranca.")
+        if 0 < len(result.history) < 3:
+            reasons.append("Historico de consumo parcial; revisar media calculada.")
+        if not result.history and result.current_consumption_kwh is not None:
+            reasons.append("Historico nao identificado; media calculada pelo consumo atual.")
         discarded_fields = result.parsed_fields.get("discarded_fields") if isinstance(result.parsed_fields, dict) else {}
         if discarded_fields:
             reasons.append("Alguns campos foram descartados por parecerem dados da distribuidora ou bandeira tarifaria.")
@@ -930,7 +1001,7 @@ class EnergyBillExtractorService:
             reasons.append("valor da conta ausente")
         if not (extraction.city and extraction.state):
             reasons.append("cidade/UF ausente")
-        if not extraction.installation_number:
+        if not (extraction.installation_number or extraction.customer_unit_number):
             reasons.append("unidade consumidora ausente")
         confidence = self._float_or_none(extraction.confidence_score)
         if confidence is not None and confidence < 0.8:
