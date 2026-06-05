@@ -26,7 +26,10 @@ from app.services.energy_bill_parsers import CPFLEnergyBillParser, GenericEnergy
 from app.services.energy_bill_parsers.base import (
     ConsumptionHistoryItem,
     EnergyBillParseResult,
+    looks_like_binary_text,
+    sanitize_data_for_database,
     sanitize_raw_excerpt,
+    sanitize_text_for_database,
 )
 from app.services.ocr import OcrResult, get_ocr_provider
 from app.services.proposals import ProposalService
@@ -52,7 +55,22 @@ ENERGY_BILL_TERMS = {
     "unidade consumidora",
     "distribuidora",
 }
+BILL_TEXT_HINTS = {
+    "kwh",
+    "consumo",
+    "energia",
+    "total",
+    "vencimento",
+    "cpfl",
+    "enel",
+    "cemig",
+    "fatura",
+    "unidade consumidora",
+    "conta de luz",
+    "conta de energia",
+}
 BILL_ATTACHMENT_TYPES = {"pdf", "image", "jpg", "jpeg", "png", "webp"}
+UPLOAD_FAILURE_MESSAGE = "Nao foi possivel processar a conta. O arquivo foi recebido, mas precisa de revisao manual."
 
 
 class EnergyBillExtractorService:
@@ -146,16 +164,16 @@ class EnergyBillExtractorService:
             source=attachment.provider or "attachment",
             origin=origin or self._origin_from_source(attachment.provider),
             file_name=self._safe_file_name(attachment.file_url),
-            file_type=attachment.file_type,
-            file_url=attachment.file_url,
+            file_type=self._text_or_none(attachment.file_type, 80),
+            file_url=self._text_or_none(attachment.file_url, 800),
             confidence_score=0,
             needs_human_review=True,
             missing_fields=[],
-            parsed_fields={
+            parsed_fields=sanitize_data_for_database({
                 "auto_created": True,
                 "origin": origin or self._origin_from_source(attachment.provider),
                 "message_hint": sanitize_raw_excerpt(message_text or "", limit=300),
-            },
+            }),
             raw_extraction={},
         )
         self.db.add(extraction)
@@ -238,7 +256,7 @@ class EnergyBillExtractorService:
     def extract_from_file(self, file_path: str, metadata: dict[str, Any] | None = None) -> EnergyBillExtraction:
         if not settings.energy_bill_extraction_enabled:
             raise ValueError("Energy bill extraction is disabled")
-        metadata = metadata or {}
+        metadata = sanitize_data_for_database(metadata or {})
         path = Path(file_path)
         self._validate_file(path)
         text, extraction_metadata = self._extract_text(path)
@@ -262,22 +280,38 @@ class EnergyBillExtractorService:
         self.db.refresh(extraction)
         return self.get_extraction(extraction.id)
 
+    def create_failed_from_file(
+        self,
+        file_path: str,
+        metadata: dict[str, Any] | None = None,
+        error_message: str = UPLOAD_FAILURE_MESSAGE,
+    ) -> EnergyBillExtraction:
+        path = Path(file_path)
+        metadata = sanitize_data_for_database((metadata or {}) | self._file_metadata(path))
+        extraction = self._create_failed_extraction(metadata, error_message)
+        self._audit("energy_bill.extraction_failed", extraction, {"status": "failed", "origin": extraction.origin})
+        self.db.commit()
+        self.db.refresh(extraction)
+        return extraction
+
     def extract_text_from_pdf(self, file_path: str) -> str:
         path = Path(file_path)
         try:
             import fitz  # type: ignore[import-not-found]
 
             with fitz.open(path) as document:
-                return "\n".join(page.get_text("text") for page in document)
-        except Exception:
-            logger.info("PDF text extraction fallback used for energy bill.")
-        return path.read_bytes().decode("utf-8", errors="ignore")
+                text = "\n".join(page.get_text("text") for page in document)
+            return sanitize_text_for_database(text)
+        except Exception as exc:
+            logger.info("PDF text extraction unavailable for energy bill. reason=%s", exc.__class__.__name__)
+            return ""
 
     def extract_text_with_ocr(self, file_path: str) -> str:
         return self._run_ocr(Path(file_path)).text
 
     def parse_energy_bill_text(self, raw_text: str, metadata: dict[str, Any] | None = None) -> EnergyBillParseResult:
-        metadata = metadata or {}
+        raw_text = sanitize_text_for_database(raw_text)
+        metadata = sanitize_data_for_database(metadata or {})
         parser = next((candidate for candidate in self.parsers if candidate.can_parse(raw_text, metadata)), self.parsers[-1])
         result = parser.parse(raw_text, metadata)
         stats = self.calculate_consumption_statistics(result.history, result.current_consumption_kwh)
@@ -376,7 +410,7 @@ class EnergyBillExtractorService:
                         "state": extraction.state or collected.get("state"),
                     }
                 )
-                conversation.collected_data = {key: value for key, value in collected.items() if value is not None}
+                conversation.collected_data = sanitize_data_for_database({key: value for key, value in collected.items() if value is not None})
 
         self._audit("energy_bill.applied_to_lead", extraction, {"lead_id": lead.id})
         self.db.commit()
@@ -436,10 +470,12 @@ class EnergyBillExtractorService:
         raw_text: str,
         metadata: dict[str, Any] | None = None,
     ) -> EnergyBillExtraction:
+        raw_text = sanitize_text_for_database(raw_text)
+        metadata = sanitize_data_for_database(metadata or {})
         result = self.parse_energy_bill_text(raw_text, metadata)
         extraction = self._create_extraction_from_result(
             result,
-            {**(metadata or {}), "raw_text": raw_text, "source": "text", "origin": "manual_text"},
+            {**metadata, "raw_text": raw_text, "source": "text", "origin": "manual_text"},
         )
         self._audit("energy_bill.extracted", extraction, {"status": extraction.status})
         self.db.commit()
@@ -468,7 +504,7 @@ class EnergyBillExtractorService:
                 "direct_text_length": len(text.strip()),
             }
         if suffix == ".txt":
-            text = path.read_text(encoding="utf-8", errors="ignore")
+            text = sanitize_text_for_database(path.read_text(encoding="utf-8", errors="ignore"))
             return text, {
                 "extraction_method": "text_file",
                 "raw_text_source": "text_file",
@@ -500,11 +536,24 @@ class EnergyBillExtractorService:
         result = provider.extract_text(str(path), max_pages=settings.energy_bill_ocr_max_pages)
         if result.error:
             logger.info("Energy bill OCR finished without usable text. provider=%s used=%s", result.provider, result.used)
-        return result
+        return OcrResult(
+            text=sanitize_text_for_database(result.text),
+            provider=sanitize_text_for_database(result.provider),
+            used=result.used,
+            page_count=result.page_count,
+            error=sanitize_text_for_database(result.error) if result.error else None,
+        )
 
     @staticmethod
     def _has_sufficient_text(text: str) -> bool:
-        return len((text or "").strip()) >= settings.energy_bill_min_text_length
+        cleaned = sanitize_text_for_database(text)
+        stripped = cleaned.strip()
+        if len(stripped) < settings.energy_bill_min_text_length:
+            return False
+        if looks_like_binary_text(text) or stripped.startswith("%PDF"):
+            return False
+        normalized = stripped.lower()
+        return any(hint in normalized for hint in BILL_TEXT_HINTS)
 
     def _empty_text_error_message(self, path: Path, metadata: dict[str, Any]) -> str:
         suffix = path.suffix.lower()
@@ -513,7 +562,7 @@ class EnergyBillExtractorService:
             if not settings.energy_bill_ocr_enabled:
                 return "O arquivo parece ser imagem ou PDF escaneado. Ative OCR local para leitura automatica ou revise manualmente."
             if ocr_error:
-                return f"OCR nao conseguiu extrair texto legivel: {ocr_error}"
+                return f"OCR nao conseguiu extrair texto legivel: {sanitize_text_for_database(str(ocr_error))}"
         return "Nao foi possivel extrair texto do arquivo."
 
     def _validate_file(self, path: Path) -> None:
@@ -526,27 +575,28 @@ class EnergyBillExtractorService:
             raise ValueError("Energy bill file is too large")
 
     def _create_extraction_from_result(self, result: EnergyBillParseResult, metadata: dict[str, Any]) -> EnergyBillExtraction:
-        raw_text = str(metadata.get("raw_text") or "")
+        metadata = sanitize_data_for_database(metadata)
+        raw_text = sanitize_text_for_database(str(metadata.get("raw_text") or ""))
         status = "needs_review" if result.needs_human_review else "extracted"
         extraction = EnergyBillExtraction(
-            conversation_id=metadata.get("conversation_id"),
-            customer_id=metadata.get("customer_id"),
-            lead_id=metadata.get("lead_id"),
-            attachment_id=metadata.get("attachment_id"),
+            conversation_id=self._text_or_none(metadata.get("conversation_id"), 36),
+            customer_id=self._text_or_none(metadata.get("customer_id"), 36),
+            lead_id=self._text_or_none(metadata.get("lead_id"), 36),
+            attachment_id=self._text_or_none(metadata.get("attachment_id"), 36),
             status=status,
-            source=metadata.get("source") or "manual",
-            origin=metadata.get("origin") or self._origin_from_source(metadata.get("source")),
-            file_name=metadata.get("file_name"),
-            file_type=metadata.get("file_type"),
-            file_url=metadata.get("file_url"),
-            distributor=result.distributor,
-            customer_name=result.customer_name,
-            customer_document_masked=result.customer_document_masked,
-            installation_number=result.installation_number,
-            city=result.city,
-            state=result.state,
-            reference_month=result.reference_month,
-            due_date=result.due_date,
+            source=self._text_or_none(metadata.get("source"), 40) or "manual",
+            origin=self._text_or_none(metadata.get("origin"), 40) or self._origin_from_source(metadata.get("source")),
+            file_name=self._text_or_none(metadata.get("file_name"), 260),
+            file_type=self._text_or_none(metadata.get("file_type"), 80),
+            file_url=self._text_or_none(metadata.get("file_url"), 800),
+            distributor=self._text_or_none(result.distributor, 180),
+            customer_name=self._text_or_none(result.customer_name, 180),
+            customer_document_masked=self._text_or_none(result.customer_document_masked, 80),
+            installation_number=self._text_or_none(result.installation_number, 120),
+            city=self._text_or_none(result.city, 120),
+            state=self._text_or_none(result.state, 2),
+            reference_month=self._text_or_none(result.reference_month, 20),
+            due_date=self._text_or_none(result.due_date, 20),
             current_consumption_kwh=result.current_consumption_kwh,
             current_bill_amount=result.current_bill_amount,
             average_consumption_kwh=result.average_consumption_kwh,
@@ -558,8 +608,8 @@ class EnergyBillExtractorService:
             estimated_monthly_savings=result.estimated_monthly_savings,
             confidence_score=result.confidence_score,
             needs_human_review=result.needs_human_review,
-            missing_fields=result.missing_fields,
-            parsed_fields=result.parsed_fields,
+            missing_fields=sanitize_data_for_database(result.missing_fields),
+            parsed_fields=sanitize_data_for_database(result.parsed_fields),
             raw_extraction=self._raw_extraction(result, raw_text),
             raw_text_excerpt=sanitize_raw_excerpt(raw_text) if raw_text else None,
         )
@@ -570,23 +620,24 @@ class EnergyBillExtractorService:
         return extraction
 
     def _create_failed_extraction(self, metadata: dict[str, Any], error_message: str) -> EnergyBillExtraction:
+        metadata = sanitize_data_for_database(metadata)
         extraction = EnergyBillExtraction(
-            conversation_id=metadata.get("conversation_id"),
-            customer_id=metadata.get("customer_id"),
-            lead_id=metadata.get("lead_id"),
-            attachment_id=metadata.get("attachment_id"),
+            conversation_id=self._text_or_none(metadata.get("conversation_id"), 36),
+            customer_id=self._text_or_none(metadata.get("customer_id"), 36),
+            lead_id=self._text_or_none(metadata.get("lead_id"), 36),
+            attachment_id=self._text_or_none(metadata.get("attachment_id"), 36),
             status="failed",
-            source=metadata.get("source") or "manual",
-            origin=metadata.get("origin") or self._origin_from_source(metadata.get("source")),
-            file_name=metadata.get("file_name"),
-            file_type=metadata.get("file_type"),
-            file_url=metadata.get("file_url"),
+            source=self._text_or_none(metadata.get("source"), 40) or "manual",
+            origin=self._text_or_none(metadata.get("origin"), 40) or self._origin_from_source(metadata.get("source")),
+            file_name=self._text_or_none(metadata.get("file_name"), 260),
+            file_type=self._text_or_none(metadata.get("file_type"), 80),
+            file_url=self._text_or_none(metadata.get("file_url"), 800),
             confidence_score=0,
             needs_human_review=True,
             missing_fields=["texto legivel da conta de energia"],
             parsed_fields=self._extraction_metadata_fields(metadata),
             raw_extraction={},
-            error_message=error_message,
+            error_message=sanitize_text_for_database(error_message),
         )
         self.db.add(extraction)
         self.db.flush()
@@ -605,13 +656,14 @@ class EnergyBillExtractorService:
             extraction.history.append(
                 EnergyBillConsumptionHistory(
                     extraction_id=extraction.id,
-                    period=str(data["period"]),
+                    period=sanitize_text_for_database(str(data["period"]), limit=20),
                     consumption_kwh=float(data["consumption_kwh"]),
                     bill_amount=data.get("bill_amount"),
                 )
             )
 
     def _apply_update_data(self, extraction: EnergyBillExtraction, data: dict[str, Any]) -> None:
+        data = sanitize_data_for_database(data)
         history = data.pop("history", None)
         for field, value in data.items():
             if hasattr(extraction, field):
@@ -645,14 +697,15 @@ class EnergyBillExtractorService:
         raw_text: str,
     ) -> None:
         extraction.status = "needs_review" if result.needs_human_review else "extracted"
-        extraction.distributor = result.distributor
-        extraction.customer_name = result.customer_name
-        extraction.customer_document_masked = result.customer_document_masked
-        extraction.installation_number = result.installation_number
-        extraction.city = result.city
-        extraction.state = result.state
-        extraction.reference_month = result.reference_month
-        extraction.due_date = result.due_date
+        raw_text = sanitize_text_for_database(raw_text)
+        extraction.distributor = self._text_or_none(result.distributor, 180)
+        extraction.customer_name = self._text_or_none(result.customer_name, 180)
+        extraction.customer_document_masked = self._text_or_none(result.customer_document_masked, 80)
+        extraction.installation_number = self._text_or_none(result.installation_number, 120)
+        extraction.city = self._text_or_none(result.city, 120)
+        extraction.state = self._text_or_none(result.state, 2)
+        extraction.reference_month = self._text_or_none(result.reference_month, 20)
+        extraction.due_date = self._text_or_none(result.due_date, 20)
         extraction.current_consumption_kwh = result.current_consumption_kwh
         extraction.current_bill_amount = result.current_bill_amount
         extraction.average_consumption_kwh = result.average_consumption_kwh
@@ -664,8 +717,8 @@ class EnergyBillExtractorService:
         extraction.estimated_monthly_savings = result.estimated_monthly_savings
         extraction.confidence_score = result.confidence_score
         extraction.needs_human_review = result.needs_human_review
-        extraction.missing_fields = result.missing_fields
-        extraction.parsed_fields = {**(extraction.parsed_fields or {}), **result.parsed_fields}
+        extraction.missing_fields = sanitize_data_for_database(result.missing_fields)
+        extraction.parsed_fields = sanitize_data_for_database({**(extraction.parsed_fields or {}), **result.parsed_fields})
         extraction.raw_extraction = self._raw_extraction(result, raw_text)
         extraction.raw_text_excerpt = sanitize_raw_excerpt(raw_text) if raw_text else None
         extraction.error_message = None
@@ -678,13 +731,14 @@ class EnergyBillExtractorService:
     ) -> None:
         extraction.status = "failed"
         extraction.needs_human_review = True
-        extraction.error_message = error_message
+        extraction.error_message = sanitize_text_for_database(error_message)
         extraction.missing_fields = extraction.missing_fields or ["texto legivel da conta de energia"]
         if metadata:
             extraction.parsed_fields = {
                 **(extraction.parsed_fields or {}),
                 **self._extraction_metadata_fields(metadata),
             }
+            extraction.parsed_fields = sanitize_data_for_database(extraction.parsed_fields)
         self._update_linked_conversation(extraction)
         self._audit("energy_bill.extraction_failed", extraction, {"origin": extraction.origin})
 
@@ -725,20 +779,20 @@ class EnergyBillExtractorService:
                 "state": extraction.state or collected.get("state"),
             }
         )
-        conversation.collected_data = {key: value for key, value in collected.items() if value is not None}
+        conversation.collected_data = sanitize_data_for_database({key: value for key, value in collected.items() if value is not None})
 
     def _raw_extraction(self, result: EnergyBillParseResult, raw_text: str) -> dict[str, Any]:
-        raw = result.to_dict()
+        raw = sanitize_data_for_database(result.to_dict())
         if settings.energy_bill_store_raw_text:
             raw["raw_text"] = sanitize_raw_excerpt(raw_text, limit=6000)
-        return raw
+        return sanitize_data_for_database(raw)
 
     def _file_metadata(self, path: Path) -> dict[str, Any]:
-        return {"file_name": path.name, "file_type": path.suffix.lower().strip("."), "file_url": str(path)}
+        return sanitize_data_for_database({"file_name": path.name, "file_type": path.suffix.lower().strip("."), "file_url": str(path)})
 
     @staticmethod
     def _extraction_metadata_fields(metadata: dict[str, Any] | None) -> dict[str, Any]:
-        metadata = metadata or {}
+        metadata = sanitize_data_for_database(metadata or {})
         keys = [
             "extraction_method",
             "ocr_used",
@@ -748,7 +802,7 @@ class EnergyBillExtractorService:
             "raw_text_source",
             "direct_text_length",
         ]
-        return {key: metadata.get(key) for key in keys if key in metadata}
+        return sanitize_data_for_database({key: metadata.get(key) for key in keys if key in metadata})
 
     def _lead_for_conversation(self, conversation_id: str) -> Lead | None:
         return self.db.scalar(select(Lead).where(Lead.conversation_id == conversation_id).order_by(desc(Lead.created_at)))
@@ -783,7 +837,7 @@ class EnergyBillExtractorService:
             extra.setdefault("city_state", f"{extraction.city} {extraction.state or ''}".strip())
         if extraction.state:
             extra.setdefault("state", extraction.state)
-        lead.extra = {key: value for key, value in extra.items() if value is not None}
+        lead.extra = sanitize_data_for_database({key: value for key, value in extra.items() if value is not None})
 
     @staticmethod
     def _origin_from_source(source: str | None) -> str:
@@ -803,8 +857,15 @@ class EnergyBillExtractorService:
         if not file_url:
             return None
         if file_url.startswith("whatsapp://media/"):
-            return file_url.rsplit("/", 1)[-1]
-        return Path(file_url.split("?", 1)[0]).name or None
+            return sanitize_text_for_database(file_url.rsplit("/", 1)[-1], limit=260)
+        return sanitize_text_for_database(Path(file_url.split("?", 1)[0]).name, limit=260) or None
+
+    @staticmethod
+    def _text_or_none(value: Any, limit: int | None = None) -> str | None:
+        if value is None:
+            return None
+        cleaned = sanitize_text_for_database(str(value), limit=limit)
+        return cleaned or None
 
     def _missing_fields(self, result: EnergyBillParseResult) -> list[str]:
         checks = {
@@ -844,7 +905,7 @@ class EnergyBillExtractorService:
                 details={
                     "status": extraction.status,
                     "confidence_score": self._float_or_none(extraction.confidence_score),
-                    **(details or {}),
+                    **sanitize_data_for_database(details or {}),
                 },
             )
         )

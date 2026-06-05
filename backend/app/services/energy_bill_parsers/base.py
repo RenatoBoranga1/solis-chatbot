@@ -4,6 +4,9 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+PDF_BINARY_TEXT_NOTICE = "Texto extraido indisponivel ou arquivo PDF escaneado/binario."
+ALLOWED_TEXT_CONTROLS = {"\n", "\r", "\t"}
+
 
 @dataclass
 class ConsumptionHistoryItem:
@@ -86,6 +89,45 @@ def normalize_text(text: str) -> str:
     return re.sub(r"\s+", " ", text.replace("\xa0", " ")).strip()
 
 
+def sanitize_text_for_database(value: str | None, limit: int | None = None) -> str:
+    if value is None:
+        return ""
+    text = str(value).replace("\x00", "")
+    cleaned = "".join(ch for ch in text if ch in ALLOWED_TEXT_CONTROLS or ord(ch) >= 32)
+    cleaned = cleaned.replace("\r\n", "\n").replace("\r", "\n")
+    if limit is not None:
+        return cleaned[:limit]
+    return cleaned
+
+
+def sanitize_data_for_database(value: Any) -> Any:
+    if isinstance(value, str):
+        return sanitize_text_for_database(value)
+    if isinstance(value, dict):
+        return {sanitize_text_for_database(str(key)): sanitize_data_for_database(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [sanitize_data_for_database(item) for item in value]
+    if isinstance(value, tuple):
+        return [sanitize_data_for_database(item) for item in value]
+    return value
+
+
+def looks_like_binary_text(value: str | None) -> bool:
+    if not value:
+        return False
+    text = str(value)
+    if sanitize_text_for_database(text).lstrip().startswith("%PDF-"):
+        return True
+    sample = text[:2000]
+    if not sample:
+        return False
+    invalid_controls = sum(1 for ch in sample if ch not in ALLOWED_TEXT_CONTROLS and ord(ch) < 32)
+    if invalid_controls >= max(5, int(len(sample) * 0.05)):
+        return True
+    printable = sum(1 for ch in sample if ch in ALLOWED_TEXT_CONTROLS or ch.isprintable())
+    return printable / max(len(sample), 1) < 0.85
+
+
 def parse_decimal(value: str | None) -> float | None:
     if not value:
         return None
@@ -119,7 +161,9 @@ def mask_document(text: str | None) -> str | None:
 
 
 def sanitize_raw_excerpt(text: str, limit: int = 1200) -> str:
-    excerpt = text[:limit]
+    if looks_like_binary_text(text):
+        return PDF_BINARY_TEXT_NOTICE
+    excerpt = sanitize_text_for_database(text, limit=limit)
     excerpt = re.sub(r"[\w.+-]+@[\w-]+\.[\w.-]+", "[email mascarado]", excerpt)
     excerpt = re.sub(r"\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b", "[documento mascarado]", excerpt)
     excerpt = re.sub(r"\b\d{2}\.?\d{3}\.?\d{3}/?\d{4}-?\d{2}\b", "[documento mascarado]", excerpt)

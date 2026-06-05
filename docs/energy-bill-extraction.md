@@ -141,7 +141,9 @@ Novos parsers podem ser adicionados em `backend/app/services/energy_bill_parsers
 
 ## OCR
 
-O OCR suporta PNG, JPG, JPEG, WEBP e PDFs escaneados. Para PDF, o sistema sempre tenta primeiro a extracao textual. Se o texto tiver pelo menos `ENERGY_BILL_MIN_TEXT_LENGTH` caracteres, o OCR nao e usado. Se o texto for vazio ou insuficiente, o OCR processa no maximo `ENERGY_BILL_OCR_MAX_PAGES` paginas.
+O OCR suporta PNG, JPG, JPEG, WEBP e PDFs escaneados. Para PDF, o sistema sempre tenta primeiro a extracao textual com PyMuPDF. Se o texto for vazio, insuficiente, iniciar com `%PDF`, parecer binario ou nao tiver pistas reais de conta de energia, o OCR processa no maximo `ENERGY_BILL_OCR_MAX_PAGES` paginas quando estiver habilitado.
+
+O sistema nunca deve decodificar bytes brutos de PDF como texto. Todo texto extraido e sanitizado antes de ir para o banco, removendo `NUL (0x00)` e controles perigosos em campos `Text`, `String` e JSONB (`parsed_fields` e `raw_extraction`). Quando o arquivo for PDF escaneado/binario e OCR estiver desligado ou falhar, a extracao fica como `failed`/`needs_review` com mensagem amigavel para revisao manual, sem erro 500 no painel.
 
 Providers:
 
@@ -167,12 +169,14 @@ Dependencias no Docker:
 - `tesseract-ocr-por`;
 - `tesseract-ocr-eng`;
 - pacotes Python `pytesseract`, `Pillow` e `pypdfium2`.
+- pacote Python `PyMuPDF` para extracao textual segura de PDF.
 
 ## LGPD e seguranca
 
 - Nao logar texto bruto completo da conta.
 - Nao expor CPF/CNPJ completo.
 - `raw_text_excerpt` e mascarado.
+- `raw_text_excerpt`, `parsed_fields`, `raw_extraction` e mensagens de erro sao sanitizados para remover NUL/control characters.
 - `ENERGY_BILL_STORE_RAW_TEXT=false` por padrao.
 - Validar tipo e tamanho de arquivo.
 - Rejeitar extensoes executaveis.

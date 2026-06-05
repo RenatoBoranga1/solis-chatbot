@@ -25,7 +25,12 @@ from app.models import (
 from app.schemas import ChatMessageIn
 from app.services.conversation import ConversationService
 from app.services.energy_bill_extractor import EnergyBillExtractorService
-from app.services.energy_bill_parsers.base import sanitize_raw_excerpt
+from app.services.energy_bill_parsers.base import (
+    PDF_BINARY_TEXT_NOTICE,
+    sanitize_data_for_database,
+    sanitize_raw_excerpt,
+    sanitize_text_for_database,
+)
 from app.services.ocr import get_ocr_provider
 from app.services.ocr.base import OcrResult
 
@@ -47,6 +52,16 @@ Mar/2026 440 kWh
 Abr/2026 455 kWh
 Mai/2026 450 kWh
 """
+
+
+def contains_nul(value) -> bool:
+    if isinstance(value, str):
+        return "\x00" in value
+    if isinstance(value, dict):
+        return any(contains_nul(key) or contains_nul(item) for key, item in value.items())
+    if isinstance(value, list):
+        return any(contains_nul(item) for item in value)
+    return False
 
 
 class FakeScalarResult:
@@ -221,6 +236,16 @@ class EnergyBillParserTest(unittest.TestCase):
         self.assertEqual(result.customer_document_masked, "***.456.789-**")
         self.assertNotIn("123.456.789-01", sanitize_raw_excerpt(SAMPLE_BILL_TEXT))
 
+    def test_sanitize_text_for_database_removes_nul_and_preserves_lines(self):
+        value = sanitize_text_for_database("linha 1\x00\nlinha 2\tok\x01")
+
+        self.assertEqual(value, "linha 1\nlinha 2\tok")
+
+    def test_sanitize_raw_excerpt_hides_binary_pdf_payload(self):
+        excerpt = sanitize_raw_excerpt("%PDF-1.4\x00obj\nconteudo binario")
+
+        self.assertEqual(excerpt, PDF_BINARY_TEXT_NOTICE)
+
     def test_confidence_high_and_low(self):
         high = EnergyBillExtractorService(FakeDb()).parse_energy_bill_text(SAMPLE_BILL_TEXT)
         low = EnergyBillExtractorService(FakeDb()).parse_energy_bill_text("Consumo 120 kWh")
@@ -266,14 +291,27 @@ class EnergyBillParserTest(unittest.TestCase):
         settings.energy_bill_ocr_provider = "local_tesseract"
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "conta.pdf"
-            path.write_text(SAMPLE_BILL_TEXT, encoding="utf-8")
-            with patch("app.services.energy_bill_extractor.get_ocr_provider") as provider_factory:
+            path.write_bytes(b"%PDF-1.7\n")
+            with (
+                patch.object(EnergyBillExtractorService, "extract_text_from_pdf", return_value=SAMPLE_BILL_TEXT),
+                patch("app.services.energy_bill_extractor.get_ocr_provider") as provider_factory,
+            ):
                 extraction = EnergyBillExtractorService(FakeDb()).extract_from_file(str(path))
 
         provider_factory.assert_not_called()
         self.assertEqual(extraction.status, "extracted")
         self.assertEqual(extraction.parsed_fields["ocr_used"], False)
         self.assertEqual(extraction.parsed_fields["extraction_method"], "pdf_text")
+
+    def test_extract_text_from_pdf_does_not_decode_raw_binary_bytes(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "conta.pdf"
+            path.write_bytes(b"%PDF-1.4\x00\x01conteudo binario sem texto")
+
+            text = EnergyBillExtractorService(FakeDb()).extract_text_from_pdf(str(path))
+
+        self.assertNotIn("%PDF-1.4", text)
+        self.assertNotIn("\x00", text)
 
     def test_scanned_pdf_attempts_ocr_when_direct_text_is_insufficient(self):
         settings.energy_bill_ocr_enabled = True
@@ -291,6 +329,44 @@ class EnergyBillParserTest(unittest.TestCase):
         self.assertEqual(extraction.parsed_fields["ocr_used"], True)
         self.assertEqual(extraction.parsed_fields["ocr_page_count"], 2)
         self.assertEqual(extraction.parsed_fields["extraction_method"], "ocr")
+
+    def test_binary_pdf_with_nul_uses_ocr_and_never_stores_nul(self):
+        settings.energy_bill_ocr_enabled = True
+        settings.energy_bill_ocr_provider = "local_tesseract"
+        fake_provider = Mock()
+        fake_provider.extract_text.return_value = OcrResult(SAMPLE_BILL_TEXT + "\x00", "local_tesseract", True, 1)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "conta.pdf"
+            path.write_bytes(b"%PDF-1.4\x00\x00obj\nconteudo binario")
+            with patch("app.services.energy_bill_extractor.get_ocr_provider", return_value=fake_provider):
+                extraction = EnergyBillExtractorService(FakeDb()).extract_from_file(str(path))
+
+        self.assertEqual(extraction.status, "extracted")
+        self.assertFalse(contains_nul(extraction.raw_text_excerpt))
+        self.assertFalse(contains_nul(extraction.parsed_fields))
+        self.assertFalse(contains_nul(extraction.raw_extraction))
+
+    def test_pdf_without_text_and_ocr_disabled_returns_failed_without_nul(self):
+        settings.energy_bill_ocr_enabled = False
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "conta.pdf"
+            path.write_bytes(b"%PDF-1.4\x00\x00obj\nconteudo binario")
+            extraction = EnergyBillExtractorService(FakeDb()).extract_from_file(
+                str(path),
+                {"file_name": "conta\x00.pdf", "ocr_error": "erro\x00controlado"},
+            )
+
+        self.assertEqual(extraction.status, "failed")
+        self.assertTrue(extraction.needs_human_review)
+        self.assertFalse(contains_nul(extraction.raw_text_excerpt))
+        self.assertFalse(contains_nul(extraction.error_message))
+        self.assertFalse(contains_nul(extraction.parsed_fields))
+        self.assertFalse(contains_nul(extraction.raw_extraction))
+
+    def test_sanitize_data_for_database_removes_nul_from_nested_json(self):
+        payload = sanitize_data_for_database({"campo\x00": ["valor\x00", {"erro": "x\x00y"}]})
+
+        self.assertFalse(contains_nul(payload))
 
     def test_external_ocr_provider_is_blocked_without_explicit_permission(self):
         settings.energy_bill_ocr_enabled = True
@@ -580,6 +656,23 @@ class EnergyBillRoutesTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertEqual(payload[0]["origin"], "chatbot")
+
+    def test_upload_binary_pdf_returns_controlled_failed_extraction_without_500(self):
+        original = settings.energy_bill_ocr_enabled
+        settings.energy_bill_ocr_enabled = False
+        try:
+            response = self.client.post(
+                "/energy-bills/extract",
+                files={"file": ("conta.pdf", b"%PDF-1.4\x00\x00obj\nconteudo binario", "application/pdf")},
+            )
+        finally:
+            settings.energy_bill_ocr_enabled = original
+
+        self.assertEqual(response.status_code, 201)
+        payload = response.json()
+        self.assertEqual(payload["status"], "failed")
+        self.assertTrue(payload["needs_human_review"])
+        self.assertNotIn("\x00", str(payload))
 
 
 if __name__ == "__main__":

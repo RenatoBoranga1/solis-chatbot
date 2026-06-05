@@ -114,6 +114,8 @@ Confirmar tabelas:
 - Confirmar que a imagem Docker instalou `tesseract-ocr`, `tesseract-ocr-por` e `tesseract-ocr-eng`.
 - Testar PNG/JPG/WEBP e PDF escaneado com OCR local em homologacao.
 - Confirmar que PDF textual nao usa OCR quando a extracao direta for suficiente.
+- Confirmar que PDF binario/escaneado sem OCR retorna `failed`/`needs_review` com mensagem amigavel, sem erro 500.
+- Confirmar que nenhum retorno do painel contem `NUL (0x00)` em `raw_text_excerpt`, `parsed_fields`, `raw_extraction` ou `error_message`.
 - Confirmar que o painel mostra metodo de extracao, OCR usado, provider, paginas processadas e erro amigavel.
 - Testar envio de PDF/imagem pelo widget em fluxo de orcamento e confirmar `origin=chatbot`.
 - Confirmar que `conversation.collected_data` e `lead.extra` recebem consumo, valor, distribuidora, confianca e status da leitura.

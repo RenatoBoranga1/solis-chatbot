@@ -237,7 +237,9 @@ A tela `Contas` do painel permite enviar PDF, imagem ou texto de conta de energi
 
 Quando o cliente envia PDF ou imagem pelo widget durante um fluxo de orcamento com consentimento LGPD, o backend registra `Attachment`, cria automaticamente uma `EnergyBillExtraction` com `origin=chatbot`, deixa o status como `processing` e agenda a leitura em background. O painel mostra a origem da conta, o vinculo com conversa/lead e os campos extraidos para revisao. Mensagens WhatsApp com midia tambem ficam preparadas para `origin=whatsapp`; enquanto o download privado da midia Meta nao estiver habilitado, o arquivo fica como `whatsapp://media/<media_id>` para revisao operacional.
 
-Para imagens e PDFs escaneados, o modulo possui OCR local opcional com Tesseract. PDF textual continua sendo lido primeiro sem OCR; se o texto for insuficiente, o sistema tenta OCR quando `ENERGY_BILL_OCR_ENABLED=true`. O painel exibe metodo de extracao, provider OCR, paginas processadas e erro amigavel quando OCR estiver desligado ou indisponivel.
+Para imagens e PDFs escaneados, o modulo possui OCR local opcional com Tesseract. PDF textual e lido com PyMuPDF primeiro sem OCR; se o texto for vazio, binario, iniciar com `%PDF` ou nao tiver pistas reais de conta de energia, o sistema tenta OCR quando `ENERGY_BILL_OCR_ENABLED=true`. O painel exibe metodo de extracao, provider OCR, paginas processadas e erro amigavel quando OCR estiver desligado ou indisponivel.
+
+O upload de PDF tambem possui protecao contra conteudo binario gravado como texto. O backend remove bytes NUL/control characters antes de persistir `raw_text_excerpt`, `parsed_fields`, `raw_extraction`, campos de cliente/instalacao e mensagens de erro. Se a conta for PDF escaneado sem OCR habilitado, a extracao fica como `failed`/`needs_review` para revisao manual, sem retornar erro 500 ao painel.
 
 Dados extraidos:
 
