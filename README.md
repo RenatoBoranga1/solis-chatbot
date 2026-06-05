@@ -232,6 +232,25 @@ Inclua o script abaixo no site institucional:
 
 Durante o desenvolvimento, o arquivo fica em `widget/solis-widget.js`.
 
+### Conexao real do widget
+
+O frontend usa `VITE_API_BASE_URL` para chamar o backend. Em desenvolvimento, se a variavel nao existir, o fallback seguro e `http://localhost:8000`; em producao, configure explicitamente a URL publica da API.
+
+```env
+VITE_API_BASE_URL=http://localhost:8000
+VITE_ENABLE_DEMO_FALLBACK=true
+```
+
+O widget chama `GET /health` ao abrir e antes de liberar o atendimento real. Se a API estiver offline, ele mostra aviso visivel, bloqueia upload de conta de energia e permite clicar em `Tentar reconectar`.
+
+`VITE_ENABLE_DEMO_FALLBACK=true` deve ser usado apenas em desenvolvimento e demonstracoes controladas. Nesse modo, a interface exibe `Modo demonstracao` e informa que mensagens, leads e anexos nao serao salvos. Em producao, use:
+
+```env
+VITE_ENABLE_DEMO_FALLBACK=false
+```
+
+O painel administrativo possui a aba `Diagnostico`, com URL da API, resposta do `/health`, ambiente, fallback demo e ultimo erro de conexao. Guia de correcao: [`docs/troubleshooting.md`](docs/troubleshooting.md).
+
 O widget React e o script embutível mostram a mensagem do usuário imediatamente, exibem uma bolha temporária de processamento com três pontos animados, bloqueiam envio/atalhos enquanto aguardam resposta e mantêm o atraso humanizado apenas no frontend. O backend continua respondendo o mais rápido possível.
 
 ## Leitor Inteligente de Conta de Energia
@@ -489,9 +508,13 @@ O chatbot informa a finalidade antes de coletar dados pessoais. O backend inclui
 ```bash
 cd backend
 python -m unittest discover tests
+
+cd ../frontend
+npm test
+npm run build
 ```
 
-Os testes cobrem classificacao de intencao, gravidade, validacao do webhook, assinatura da Meta, deduplicacao, anexos, auditoria `WebhookEvent`, continuidade site -> WhatsApp, propostas comerciais, kits fotovoltaicos, tabela de precos, link seguro, resposta digital, follow-ups, configuracoes comerciais e falhas de envio.
+Os testes cobrem classificacao de intencao, gravidade, validacao do webhook, assinatura da Meta, deduplicacao, anexos, auditoria `WebhookEvent`, continuidade site -> WhatsApp, propostas comerciais, kits fotovoltaicos, tabela de precos, link seguro, resposta digital, follow-ups, configuracoes comerciais, falhas de envio, `/health` e configuracao de conexao do widget.
 
 ## Deploy sugerido
 
@@ -505,3 +528,5 @@ Os testes cobrem classificacao de intencao, gravidade, validacao do webhook, ass
 8. Configurar webhook oficial da Meta em `https://seu-dominio.com/webhook/whatsapp`.
 9. Cadastrar base de conhecimento oficial antes de habilitar respostas generativas.
 10. Configurar `FRONTEND_ORIGINS` com o dominio publico e validar `/proposta/{token}` antes de enviar propostas reais.
+11. Configurar `VITE_API_BASE_URL` no frontend apontando para a API publica.
+12. Manter `VITE_ENABLE_DEMO_FALLBACK=false` em producao.

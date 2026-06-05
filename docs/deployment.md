@@ -8,6 +8,8 @@ Use este checklist antes de homologar ou publicar o Solis Chatbot com WhatsApp C
 - Configurar `APP_ENV=production`.
 - Configurar `APP_DEBUG=false`.
 - Restringir `FRONTEND_ORIGINS` aos dominios oficiais.
+- Configurar `VITE_API_BASE_URL` no frontend com a URL publica da API.
+- Configurar `VITE_ENABLE_DEMO_FALLBACK=false` em producao.
 - Trocar credenciais padrao do usuario admin.
 - Usar `JWT_SECRET_KEY` forte.
 - Usar `FIELD_ENCRYPTION_KEY` forte.
@@ -62,6 +64,16 @@ Confirmar tabelas:
 - `company_settings`.
 - `energy_bill_extractions`.
 - `energy_bill_consumption_history`.
+
+## Saude da API e widget
+
+- Confirmar que `GET /health` retorna `status=ok`, `service` e `environment`.
+- Confirmar que o backend possui healthcheck no Docker Compose.
+- Confirmar que o frontend recebeu `VITE_API_BASE_URL` e nao `API_BASE_URL`.
+- Confirmar que o painel `Diagnostico` mostra a API online.
+- Confirmar que o widget bloqueia upload quando a API esta offline.
+- Confirmar que `VITE_ENABLE_DEMO_FALLBACK=false` bloqueia atendimento simulado em producao.
+- Usar [`docs/troubleshooting.md`](troubleshooting.md) quando aparecer `API offline` ou `Modo demonstracao`.
 
 ## Omnichannel
 

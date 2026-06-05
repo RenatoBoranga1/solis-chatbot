@@ -561,6 +561,24 @@ class EnergyBillParserTest(unittest.TestCase):
 
 
 class EnergyBillServiceTest(unittest.TestCase):
+    def test_budget_lead_creation_accepts_numeric_average_bill_from_extraction(self):
+        customer = customer_fixture()
+        conversation = conversation_fixture(customer)
+        collected = {
+            "property_type": "residencia",
+            "average_bill": 421.9,
+            "utility_company": "CPFL",
+            "roof_type": "ceramica",
+            "financing_interest": "sim",
+        }
+        db = FakeDb()
+
+        lead = ConversationService(db)._create_lead(conversation, customer, collected)
+
+        self.assertEqual(float(lead.average_bill), 421.9)
+        self.assertEqual(lead.utility_company, "CPFL")
+        self.assertTrue(lead.financing_interest)
+
     def test_detects_possible_energy_bill_attachment_in_budget_context(self):
         customer = customer_fixture()
         conversation = conversation_fixture(customer)

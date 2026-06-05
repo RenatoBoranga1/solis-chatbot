@@ -1,7 +1,7 @@
-import { Bot, ExternalLink, FileUp, MessageCircle, PlayCircle, Send, UserRound, X } from "lucide-react";
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { Bot, ExternalLink, FileUp, MessageCircle, PlayCircle, RefreshCw, Send, UserRound, X } from "lucide-react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
-import { sendChatMessage, uploadChatAttachment } from "../api";
+import { ENABLE_DEMO_FALLBACK, checkApiHealth, sendChatMessage, uploadChatAttachment } from "../api";
 import type { ChatMessage, QuickReply } from "../types";
 
 const initialMessage =
@@ -17,6 +17,7 @@ const initialQuickReplies: QuickReply[] = [
 
 const PROCESSING_MIN_DELAY_MS = 1200;
 const PROCESSING_MAX_ARTIFICIAL_MS = 2500;
+type ApiStatus = "checking" | "online" | "offline";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -116,16 +117,58 @@ export function ChatWidget() {
   ]);
   const [loading, setLoading] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | undefined>();
+  const [apiStatus, setApiStatus] = useState<ApiStatus>("checking");
+  const [apiError, setApiError] = useState("");
+  const [demoMode, setDemoMode] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const refreshApiStatus = useCallback(async () => {
+    setApiStatus("checking");
+    try {
+      await checkApiHealth();
+      setApiStatus("online");
+      setApiError("");
+      setDemoMode(false);
+    } catch (error) {
+      setApiStatus("offline");
+      setApiError(error instanceof Error ? error.message : "API offline");
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshApiStatus();
+  }, [refreshApiStatus]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ block: "end" });
   }, [messages]);
 
+  function addBotNotice(content: string) {
+    setMessages((current) => [...current, { id: crypto.randomUUID(), sender: "bot", content }]);
+  }
+
+  function offlineMessage() {
+    return ENABLE_DEMO_FALLBACK
+      ? "Estou em modo demonstracao porque nao consegui conectar ao servidor do Solis. As mensagens deste teste nao serao salvas no painel."
+      : "Nao consegui conectar ao sistema da Solar Solucoes agora. Por favor, tente novamente em instantes ou entre em contato com a equipe.";
+  }
+
   async function submitMessage(message: string, attachment?: File) {
     const trimmed = message.trim();
     if ((!trimmed && !attachment) || loading) return;
+    if (apiStatus === "checking") {
+      addBotNotice("Ainda estou verificando a conexao com o servidor do Solis. Tente novamente em alguns instantes.");
+      return;
+    }
+    if (attachment && apiStatus !== "online") {
+      addBotNotice("Para enviar conta de energia, o servidor precisa estar conectado. Verifique se o backend esta ativo.");
+      return;
+    }
+    if (apiStatus === "offline" && !ENABLE_DEMO_FALLBACK) {
+      addBotNotice(offlineMessage());
+      return;
+    }
 
     const startedAt = Date.now();
     const customerMessage = trimmed || `Arquivo enviado: ${attachment?.name}`;
@@ -152,6 +195,14 @@ export function ChatWidget() {
         attachmentUrl: uploadedAttachment?.attachment_url,
         mediaType: uploadedAttachment?.media_type,
       });
+      if (response.demo) {
+        setDemoMode(true);
+        setApiStatus("offline");
+      } else {
+        setDemoMode(false);
+        setApiStatus("online");
+        setApiError("");
+      }
       const elapsed = Date.now() - startedAt;
       const remainingDelay = Math.min(
         PROCESSING_MAX_ARTIFICIAL_MS,
@@ -174,9 +225,13 @@ export function ChatWidget() {
           .concat({
             id: crypto.randomUUID(),
             sender: "bot",
-            content: "Não consegui conectar ao atendimento agora. Verifique se a API local está ativa e tente novamente.",
+            content: attachment
+              ? "Para enviar conta de energia, o servidor precisa estar conectado. Verifique se o backend esta ativo."
+              : offlineMessage(),
           }),
       );
+      setApiStatus("offline");
+      setApiError(error instanceof Error ? error.message : "Falha ao conectar com a API.");
     } finally {
       setLoading(false);
     }
@@ -189,6 +244,10 @@ export function ChatWidget() {
 
   function handleFileSelect(file?: File) {
     if (!file) return;
+    if (apiStatus !== "online") {
+      addBotNotice("Para enviar conta de energia, o servidor precisa estar conectado. Verifique se o backend esta ativo.");
+      return;
+    }
     setSelectedFile(file);
     setInput((current) => current || `Estou enviando o arquivo ${file.name}`);
   }
@@ -215,6 +274,26 @@ export function ChatWidget() {
           <X size={18} />
         </button>
       </header>
+
+      {(apiStatus !== "online" || demoMode) && (
+        <div className={`connection-banner connection-banner--${demoMode ? "demo" : apiStatus}`}>
+          <div>
+            <strong>{demoMode ? "Modo demonstracao" : apiStatus === "checking" ? "Conectando" : "API offline"}</strong>
+            <span>
+              {apiStatus === "checking"
+                ? "Verificando conexao com o servidor do Solis."
+                : demoMode
+                  ? "As mensagens deste teste nao serao salvas no painel."
+                  : "Nao foi possivel conectar ao servidor do Solis. O atendimento real nao sera salvo enquanto a API estiver offline."}
+              {apiError ? ` ${apiError}` : ""}
+            </span>
+          </div>
+          <button type="button" onClick={() => void refreshApiStatus()} disabled={apiStatus === "checking"}>
+            <RefreshCw size={14} className={apiStatus === "checking" ? "spin" : ""} />
+            Tentar reconectar
+          </button>
+        </div>
+      )}
 
       <div className="solis-widget__messages">
         {messages.map((message) => (
@@ -243,7 +322,12 @@ export function ChatWidget() {
       {quickReplies.length > 0 && (
         <div className="quick-replies" aria-label="Opções rápidas">
           {quickReplies.map((reply) => (
-            <button key={reply.value} type="button" onClick={() => submitMessage(reply.value)} disabled={loading}>
+            <button
+              key={reply.value}
+              type="button"
+              onClick={() => submitMessage(reply.value)}
+              disabled={loading || apiStatus === "checking" || (apiStatus === "offline" && !ENABLE_DEMO_FALLBACK)}
+            >
               {reply.label}
             </button>
           ))}
@@ -265,8 +349,8 @@ export function ChatWidget() {
           className="icon-button"
           onClick={() => fileInputRef.current?.click()}
           aria-label="Enviar imagem ou documento"
-          title="Enviar imagem ou documento"
-          disabled={loading}
+          title={apiStatus === "online" ? "Enviar imagem ou documento" : "Servidor offline: upload bloqueado"}
+          disabled={loading || apiStatus !== "online"}
         >
           <FileUp size={18} />
         </button>
@@ -275,9 +359,14 @@ export function ChatWidget() {
           onChange={(event) => setInput(event.target.value)}
           placeholder="Digite sua mensagem"
           aria-label="Mensagem"
-          disabled={loading}
+          disabled={loading || apiStatus === "checking" || (apiStatus === "offline" && !ENABLE_DEMO_FALLBACK)}
         />
-        <button className="send-button" type="submit" aria-label="Enviar mensagem" disabled={loading}>
+        <button
+          className="send-button"
+          type="submit"
+          aria-label="Enviar mensagem"
+          disabled={loading || apiStatus === "checking" || (apiStatus === "offline" && !ENABLE_DEMO_FALLBACK)}
+        >
           <Send size={18} />
         </button>
       </form>

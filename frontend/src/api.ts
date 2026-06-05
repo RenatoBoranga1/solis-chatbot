@@ -23,9 +23,69 @@ import type {
   PublicProposal,
   Ticket,
 } from "./types";
+import { API_BASE_URL, ENABLE_DEMO_FALLBACK, apiUrl, diagnosticsConfig } from "./config";
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
-const ENABLE_DEMO_FALLBACK = import.meta.env.VITE_ENABLE_DEMO_FALLBACK !== "false";
+export type HealthResponse = {
+  status: string;
+  service: string;
+  environment: string;
+};
+
+export class ApiRequestError extends Error {
+  endpoint: string;
+  status?: number;
+
+  constructor(message: string, endpoint: string, status?: number) {
+    super(message);
+    this.name = "ApiRequestError";
+    this.endpoint = endpoint;
+    this.status = status;
+  }
+}
+
+export { API_BASE_URL, ENABLE_DEMO_FALLBACK, diagnosticsConfig };
+
+export async function checkApiHealth(): Promise<HealthResponse> {
+  const endpoint = "/health";
+  try {
+    const response = await fetch(apiUrl(endpoint), { cache: "no-store" });
+    if (!response.ok) {
+      throw new ApiRequestError(`Healthcheck retornou HTTP ${response.status}.`, endpoint, response.status);
+    }
+    const data = (await response.json()) as HealthResponse;
+    if (data.status !== "ok") {
+      throw new ApiRequestError("Healthcheck nao retornou status ok.", endpoint, response.status);
+    }
+    return data;
+  } catch (error) {
+    logApiFailure(endpoint, error, false);
+    throw error;
+  }
+}
+
+function logApiFailure(endpoint: string, error: unknown, fallbackUsed: boolean) {
+  if (!import.meta.env.DEV) return;
+  console.error("[Solis API] Falha de conexao", {
+    apiBaseUrl: API_BASE_URL || "nao configurado",
+    endpoint,
+    status: error instanceof ApiRequestError ? error.status : undefined,
+    message: error instanceof Error ? error.message : String(error),
+    fallbackUsed,
+  });
+}
+
+async function apiErrorFromResponse(response: Response, endpoint: string) {
+  let message = `Falha HTTP ${response.status}.`;
+  try {
+    const body = await response.json();
+    if (typeof body?.detail === "string") {
+      message = body.detail;
+    }
+  } catch {
+    message = response.statusText || message;
+  }
+  return new ApiRequestError(message, endpoint, response.status);
+}
 
 export async function sendChatMessage(input: {
   message: string;
@@ -33,8 +93,9 @@ export async function sendChatMessage(input: {
   attachmentUrl?: string;
   mediaType?: string;
 }): Promise<ChatResponse> {
+  const endpoint = "/chat/message";
   try {
-    const response = await fetch(`${API_BASE_URL}/chat/message`, {
+    const response = await fetch(apiUrl(endpoint), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -45,9 +106,10 @@ export async function sendChatMessage(input: {
         media_type: input.mediaType,
       }),
     });
-    if (!response.ok) throw new Error("Não foi possível enviar a mensagem.");
+    if (!response.ok) throw await apiErrorFromResponse(response, endpoint);
     return response.json();
   } catch (error) {
+    logApiFailure(endpoint, error, ENABLE_DEMO_FALLBACK);
     if (!ENABLE_DEMO_FALLBACK) throw error;
     return buildDemoResponse(input.message, input.conversationId);
   }
@@ -58,22 +120,19 @@ export async function uploadChatAttachment(file: File): Promise<{
   file_name: string;
   media_type: string;
 }> {
+  const endpoint = "/chat/attachments";
   const formData = new FormData();
   formData.append("file", file);
   try {
-    const response = await fetch(`${API_BASE_URL}/chat/attachments`, {
+    const response = await fetch(apiUrl(endpoint), {
       method: "POST",
       body: formData,
     });
-    if (!response.ok) throw new Error("Nao foi possivel enviar o anexo.");
+    if (!response.ok) throw await apiErrorFromResponse(response, endpoint);
     return response.json();
   } catch (error) {
-    if (!ENABLE_DEMO_FALLBACK) throw error;
-    return {
-      attachment_url: file.name,
-      file_name: file.name,
-      media_type: file.type.startsWith("image/") ? "image" : file.name.toLowerCase().endsWith(".pdf") ? "pdf" : "unknown",
-    };
+    logApiFailure(endpoint, error, false);
+    throw error;
   }
 }
 
@@ -92,7 +151,8 @@ function buildDemoResponse(message: string, conversationId?: string): ChatRespon
     handoff_required: false,
     created_lead_id: null,
     created_ticket_id: null,
-    summary: "Resposta gerada em modo demonstração porque a API local não está ativa.",
+    summary: "Resposta gerada em modo demonstracao; mensagens nao sao salvas no painel.",
+    demo: true,
     quick_replies: [
       { label: "Quero um orçamento", value: "Quero um orçamento" },
       { label: "Preciso de suporte técnico", value: "Preciso de suporte técnico" },
@@ -105,7 +165,7 @@ function buildDemoResponse(message: string, conversationId?: string): ChatRespon
       ...base,
       intent: "orcamento",
       response:
-        "Perfeito, vou te ajudar com o orçamento. Para continuar, vou coletar algumas informações de contato e do imóvel, usadas apenas para atendimento e orçamento da Solar Soluções. Tudo bem?",
+        "Estou em modo demonstracao porque nao consegui conectar ao servidor do Solis. As mensagens deste teste nao serao salvas no painel.\n\nPerfeito, vou te ajudar com o orcamento em modo demonstracao. Para continuar, eu perguntaria uma informacao por vez, com consentimento LGPD antes de coletar dados.",
       next_question_key: "lgpd_consent",
       quick_replies: [
         { label: "Sim, tudo bem", value: "Sim, tudo bem" },
@@ -120,7 +180,7 @@ function buildDemoResponse(message: string, conversationId?: string): ChatRespon
       intent: "suporte_tecnico",
       severity: normalized.includes("queimado") || normalized.includes("faisca") ? "alta" : "media",
       response:
-        "Entendi, vou te ajudar com o suporte técnico. O backend local não está ativo agora, então estou em modo demonstração. No fluxo real, eu registraria o chamado e perguntaria uma informação por vez, começando por: o inversor está ligado?",
+        "Estou em modo demonstracao porque nao consegui conectar ao servidor do Solis. As mensagens deste teste nao serao salvas no painel.\n\nNo fluxo real, eu registraria o chamado e perguntaria uma informacao por vez, comecando por: o inversor esta ligado?",
       next_question_key: "inverter_on",
     };
   }
@@ -131,7 +191,7 @@ function buildDemoResponse(message: string, conversationId?: string): ChatRespon
       intent: "humano",
       handoff_required: true,
       response:
-        "Vou te encaminhar para um especialista da equipe Solar Soluções para garantir um atendimento mais preciso. Já registrei as informações que você enviou para que você não precise repetir tudo.",
+        "Estou em modo demonstracao porque nao consegui conectar ao servidor do Solis. As mensagens deste teste nao serao salvas no painel.\n\nNo atendimento real, eu encaminharia para um especialista da equipe Solar Solucoes sem pedir para voce repetir as informacoes.",
       next_question_key: null,
     };
   }
@@ -140,13 +200,13 @@ function buildDemoResponse(message: string, conversationId?: string): ChatRespon
     ...base,
     intent: "outros",
     response:
-      "Entendi, vou te ajudar com isso. Estou em modo demonstração porque a API local não está ativa. Para o atendimento real, suba o backend em `http://127.0.0.1:8000` e eu registrarei a conversa no sistema.",
+      "Estou em modo demonstracao porque nao consegui conectar ao servidor do Solis. As mensagens deste teste nao serao salvas no painel.\n\nQuando a API voltar, o atendimento real sera registrado normalmente.",
     next_question_key: null,
   };
 }
 
 export async function login(email: string, password: string): Promise<string> {
-  const response = await fetch(`${API_BASE_URL}/auth/login`, {
+  const response = await fetch(apiUrl("/auth/login"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, password }),
@@ -157,7 +217,7 @@ export async function login(email: string, password: string): Promise<string> {
 }
 
 export async function getPublicProposal(token: string): Promise<PublicProposal> {
-  const response = await fetch(`${API_BASE_URL}/public/proposals/${token}`);
+  const response = await fetch(apiUrl(`/public/proposals/${token}`));
   if (!response.ok) throw new Error("Link de proposta invalido ou indisponivel.");
   return response.json();
 }
@@ -172,7 +232,7 @@ export async function sendPublicProposalResponse(
     message?: string | null;
   },
 ): Promise<{ status: string; message: string; response: ProposalCustomerResponse }> {
-  const response = await fetch(`${API_BASE_URL}/public/proposals/${token}/responses`, {
+  const response = await fetch(apiUrl(`/public/proposals/${token}/responses`), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -182,7 +242,7 @@ export async function sendPublicProposalResponse(
 }
 
 async function adminFetch<T>(path: string, token: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const response = await fetch(apiUrl(path), {
     ...init,
     headers: {
       "Content-Type": "application/json",
@@ -196,7 +256,7 @@ async function adminFetch<T>(path: string, token: string, init?: RequestInit): P
 }
 
 async function adminUpload<T>(path: string, token: string, formData: FormData): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const response = await fetch(apiUrl(path), {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,

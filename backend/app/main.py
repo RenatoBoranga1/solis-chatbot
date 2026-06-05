@@ -59,7 +59,11 @@ async def rate_limit(request: Request, call_next):
 
 @app.get("/health", tags=["Sistema"])
 def health() -> dict[str, str]:
-    return {"status": "ok", "service": settings.app_name}
+    return {
+        "status": "ok",
+        "service": settings.app_name,
+        "environment": settings.app_env,
+    }
 
 
 app.include_router(routes_auth.router)

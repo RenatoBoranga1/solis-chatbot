@@ -4,9 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import { getPublicProposal, sendPublicProposalResponse } from "./api";
 import { AdminDashboard } from "./components/AdminDashboard";
 import { ChatWidget } from "./components/ChatWidget";
+import { API_BASE_URL } from "./config";
 import type { PublicProposal } from "./types";
-
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 
 export function App() {
   const publicProposalToken = getPublicProposalToken();

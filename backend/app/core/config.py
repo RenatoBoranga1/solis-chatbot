@@ -1,6 +1,7 @@
 from functools import lru_cache
+import json
 
-from pydantic import AnyHttpUrl, Field, field_validator
+from pydantic import AnyHttpUrl, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -9,7 +10,10 @@ class Settings(BaseSettings):
     app_env: str = "development"
     app_debug: bool = True
     api_base_url: str = "http://localhost:8000"
-    frontend_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
+    frontend_origins_raw: str = Field(
+        default="http://localhost:5173",
+        validation_alias="FRONTEND_ORIGINS",
+    )
 
     database_url: str = "postgresql+psycopg://solis:solis_dev_password@localhost:5432/solis"
     redis_url: str | None = None
@@ -73,12 +77,19 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-    @field_validator("frontend_origins", mode="before")
-    @classmethod
-    def split_origins(cls, value: str | list[str]) -> list[str]:
-        if isinstance(value, str):
-            return [origin.strip() for origin in value.split(",") if origin.strip()]
-        return value
+    @property
+    def frontend_origins(self) -> list[str]:
+        value = self.frontend_origins_raw.strip()
+        if not value:
+            return ["http://localhost:5173"]
+        if value.startswith("["):
+            try:
+                parsed = json.loads(value)
+                if isinstance(parsed, list):
+                    return [str(origin).strip() for origin in parsed if str(origin).strip()]
+            except json.JSONDecodeError:
+                pass
+        return [origin.strip() for origin in value.split(",") if origin.strip()]
 
 
 @lru_cache

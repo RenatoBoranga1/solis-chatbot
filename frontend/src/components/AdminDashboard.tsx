@@ -23,7 +23,8 @@
 } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 
-import { adminApi, login } from "../api";
+import { API_BASE_URL, ENABLE_DEMO_FALLBACK, checkApiHealth, diagnosticsConfig, adminApi, login } from "../api";
+import type { HealthResponse } from "../api";
 import type {
   AIAnalysis,
   CompanySettings,
@@ -646,6 +647,7 @@ export function AdminDashboard() {
           <NavButton id="propostas" label="Propostas" icon={<FileText size={18} />} active={activeView} onClick={setActiveView} />
           <NavButton id="chamados" label="Chamados" icon={<TicketCheck size={18} />} active={activeView} onClick={setActiveView} />
           <NavButton id="base" label="Base" icon={<BookOpenText size={18} />} active={activeView} onClick={setActiveView} />
+          <NavButton id="diagnostico" label="Diagnostico" icon={<ShieldCheck size={18} />} active={activeView} onClick={setActiveView} />
         </nav>
       </aside>
 
@@ -769,8 +771,71 @@ export function AdminDashboard() {
             onSubmit={handleCreateArticle}
           />
         )}
+        {activeView === "diagnostico" && <DiagnosticsView />}
       </main>
     </section>
+  );
+}
+
+function DiagnosticsView() {
+  const [health, setHealth] = useState<HealthResponse | null>(null);
+  const [status, setStatus] = useState<"checking" | "online" | "offline">("checking");
+  const [lastCheckedAt, setLastCheckedAt] = useState<string>("");
+  const [error, setError] = useState("");
+
+  const runHealthcheck = useCallback(async () => {
+    setStatus("checking");
+    setError("");
+    setLastCheckedAt(new Date().toLocaleString("pt-BR"));
+    try {
+      const result = await checkApiHealth();
+      setHealth(result);
+      setStatus("online");
+    } catch (healthError) {
+      setHealth(null);
+      setStatus("offline");
+      setError(healthError instanceof Error ? healthError.message : "Nao foi possivel consultar /health.");
+    }
+  }, []);
+
+  useEffect(() => {
+    void runHealthcheck();
+  }, [runHealthcheck]);
+
+  return (
+    <section className="diagnostics-panel">
+      <div className="section-heading">
+        <div>
+          <strong>Diagnostico do ambiente local</strong>
+          <span>Use esta tela quando o widget indicar API offline ou modo demonstracao.</span>
+        </div>
+        <button className="secondary-button" onClick={() => void runHealthcheck()} disabled={status === "checking"}>
+          <RefreshCw size={16} className={status === "checking" ? "spin" : ""} />
+          Testar conexao
+        </button>
+      </div>
+      <div className="diagnostics-grid">
+        <InfoTile label="Frontend" value="Carregado" />
+        <InfoTile label="API base URL" value={API_BASE_URL || "Nao configurada"} />
+        <InfoTile label="Status da API" value={status === "online" ? "Online" : status === "checking" ? "Verificando" : "Offline"} tone={status} />
+        <InfoTile label="Ambiente frontend" value={diagnosticsConfig.appEnv} />
+        <InfoTile label="Fallback demo" value={ENABLE_DEMO_FALLBACK ? "Ativo" : "Inativo"} tone={ENABLE_DEMO_FALLBACK ? "checking" : "online"} />
+        <InfoTile label="Ultima checagem" value={lastCheckedAt || "Ainda nao checado"} />
+      </div>
+      {health && (
+        <pre className="diagnostics-json">{JSON.stringify(health, null, 2)}</pre>
+      )}
+      {error && <p className="proposal-alert proposal-alert--warning">{error}</p>}
+    </section>
+  );
+}
+
+function InfoTile({ label, value, tone }: { label: string; value: string; tone?: "checking" | "online" | "offline" }) {
+  return (
+    <article className={`diagnostics-tile diagnostics-tile--${tone ?? "neutral"}`}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </article>
   );
 }
 
@@ -798,6 +863,7 @@ function titleFor(view: string) {
     propostas: "Propostas",
     chamados: "Chamados tÃ©cnicos",
     base: "Base de conhecimento",
+    diagnostico: "Diagnostico local",
   };
   return titles[view] ?? "Painel";
 }
@@ -811,6 +877,7 @@ function subtitleFor(view: string) {
     propostas: "CriaÃ§Ã£o, revisÃ£o, PDF e envio de propostas comerciais.",
     chamados: "Triagem tÃ©cnica com gravidade e status.",
     base: "Perguntas e respostas oficiais para IA e atendimento.",
+    diagnostico: "Conexao do frontend com API, ambiente e fallback demo.",
   };
   return subtitles[view] ?? "";
 }

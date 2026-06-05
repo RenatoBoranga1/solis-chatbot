@@ -23,6 +23,7 @@ export type ChatResponse = {
   next_question_key: string | null;
   quick_replies: QuickReply[];
   summary: string | null;
+  demo?: boolean;
 };
 
 export type DashboardMetrics = {

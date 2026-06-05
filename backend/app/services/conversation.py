@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from decimal import Decimal
 import re
 from pathlib import Path
 from typing import Any
@@ -658,10 +659,14 @@ class ConversationService:
         return text in {"nao", "não", "negativo", "nao autorizo", "prefiro nao"}
 
     @staticmethod
-    def _money_to_float(value: str | None) -> float | None:
-        if not value:
+    def _money_to_float(value: str | int | float | Decimal | None) -> float | None:
+        if value is None or value == "":
             return None
-        match = re.search(r"(\d+[\d.,]*)", value)
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, (int, float, Decimal)):
+            return float(value)
+        match = re.search(r"(\d+[\d.,]*)", str(value))
         if not match:
             return None
         number = match.group(1).replace(".", "").replace(",", ".")

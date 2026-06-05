@@ -1338,7 +1338,7 @@ input:disabled {
   bottom: 22px;
   z-index: 20;
   display: grid;
-  grid-template-rows: auto 1fr auto auto;
+  grid-template-rows: auto auto 1fr auto auto auto;
   width: min(390px, calc(100vw - 28px));
   height: min(650px, calc(100vh - 40px));
   overflow: hidden;
@@ -1346,6 +1346,51 @@ input:disabled {
   border-radius: 8px;
   background: #ffffff;
   box-shadow: 0 24px 60px rgb(0 0 0 / 28%);
+}
+
+.connection-banner {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  border-bottom: 1px solid #e1e8f0;
+  padding: 10px 12px;
+  color: #734b00;
+  background: #fff6dc;
+  font-size: 0.82rem;
+}
+
+.connection-banner--offline {
+  color: #8a1d1d;
+  background: #fff0ed;
+}
+
+.connection-banner--checking {
+  color: #315b4e;
+  background: #e8f5ef;
+}
+
+.connection-banner strong,
+.connection-banner span {
+  display: block;
+}
+
+.connection-banner span {
+  margin-top: 2px;
+  line-height: 1.35;
+}
+
+.connection-banner button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  border: 1px solid currentcolor;
+  border-radius: 6px;
+  padding: 0 8px;
+  color: inherit;
+  background: transparent;
+  font-weight: 800;
 }
 
 .solis-widget__header {
@@ -1672,6 +1717,60 @@ input:disabled {
 
 .spin {
   animation: spin 0.8s linear infinite;
+}
+
+.diagnostics-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.diagnostics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 12px;
+}
+
+.diagnostics-tile {
+  display: grid;
+  gap: 6px;
+  min-height: 84px;
+  border: 1px solid #dbe3ed;
+  border-left: 4px solid #9eacba;
+  border-radius: 8px;
+  padding: 14px;
+  background: #ffffff;
+}
+
+.diagnostics-tile span {
+  color: #64748b;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.diagnostics-tile strong {
+  color: #10243a;
+  overflow-wrap: anywhere;
+}
+
+.diagnostics-tile--online {
+  border-left-color: #0a6f5a;
+}
+
+.diagnostics-tile--offline {
+  border-left-color: #c2412f;
+}
+
+.diagnostics-tile--checking {
+  border-left-color: #d69e2e;
+}
+
+.diagnostics-json {
+  overflow: auto;
+  border: 1px solid #dbe3ed;
+  border-radius: 8px;
+  padding: 12px;
+  color: #10243a;
+  background: #f8fafc;
 }
 
 .energy-bills-layout {

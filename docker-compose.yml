@@ -33,6 +33,7 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://solis:solis_dev_password@db:5432/solis
       REDIS_URL: redis://redis:6379/0
+      FRONTEND_ORIGINS: http://localhost:5173,http://127.0.0.1:5173
     ports:
       - "8000:8000"
     depends_on:
@@ -40,6 +41,11 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     command: >
       sh -c "alembic upgrade head &&
              python -m app.seed &&
@@ -50,10 +56,12 @@ services:
       context: ./frontend
     environment:
       VITE_API_BASE_URL: http://localhost:8000
+      VITE_ENABLE_DEMO_FALLBACK: "true"
     ports:
       - "5173:5173"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
 
 volumes:
   postgres_data:
