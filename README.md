@@ -516,6 +516,12 @@ npm run build
 
 Os testes cobrem classificacao de intencao, gravidade, validacao do webhook, assinatura da Meta, deduplicacao, anexos, auditoria `WebhookEvent`, continuidade site -> WhatsApp, propostas comerciais, kits fotovoltaicos, tabela de precos, link seguro, resposta digital, follow-ups, configuracoes comerciais, falhas de envio, `/health` e configuracao de conexao do widget.
 
+Para homologar o fluxo comercial completo, use o roteiro manual em [`docs/e2e-test-solis.md`](docs/e2e-test-solis.md). Ele cobre chatbot, LGPD, upload da conta, leitura inteligente/OCR, tela Contas, aplicacao ao lead, recomendacao de kit, proposta, PDF e link seguro. A parte repetitiva pode ser validada com:
+
+```powershell
+.\scripts\e2e-smoke.ps1
+```
+
 ## Deploy sugerido
 
 1. Provisionar PostgreSQL gerenciado e Redis.

@@ -29,6 +29,8 @@ test("widget makes offline and demo states explicit", () => {
   assert.match(widget, /apiStatus === "checking"/);
   assert.match(widget, /apiStatus !== "online"/);
   assert.match(widget, /Para enviar conta de energia/);
+  assert.match(widget, /offlineMessage/);
+  assert.match(widget, /!ENABLE_DEMO_FALLBACK/);
   assert.doesNotMatch(widget, /suba o backend/i);
 });
 
