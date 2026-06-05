@@ -53,6 +53,39 @@ Abr/2026 455 kWh
 Mai/2026 450 kWh
 """
 
+CPFL_PROBLEMATIC_TEXT = """
+CPFL Paulista
+Cliente: Maria Energia
+CPF 987.654.321-00
+Unidade Consumidora: Verde
+Bandeira Verde
+Cidade: TERREO - JAGUARIUNA - JAGUARIUNA SP
+Consumo faturado: 26 kWh
+ICMS R$ 3,10
+PIS/COFINS R$ 1,20
+Historico de consumo
+Mai/2026 26 kWh
+"""
+
+CPFL_AMOUNT_PRIORITY_TEXT = """
+CPFL Paulista
+Cliente: Maria Energia
+CPF 987.654.321-00
+Instalacao: 123456789
+Cidade: Campinas SP
+Referencia: 05/2026
+Vencimento: 12/06/2026
+Consumo faturado: 26 kWh
+ICMS R$ 3,10
+PIS/COFINS R$ 1,20
+Tarifa unitario R$ 0,95
+Total a pagar R$ 89,70
+Historico de consumo
+Mar/2026 22 kWh
+Abr/2026 24 kWh
+Mai/2026 26 kWh
+"""
+
 
 def contains_nul(value) -> bool:
     if isinstance(value, str):
@@ -253,6 +286,57 @@ class EnergyBillParserTest(unittest.TestCase):
         self.assertGreaterEqual(high.confidence_score, settings.energy_bill_min_confidence_auto_apply)
         self.assertLess(low.confidence_score, settings.energy_bill_min_confidence_auto_apply)
         self.assertTrue(low.needs_human_review)
+
+    def test_cpfl_does_not_use_tariff_flag_as_installation(self):
+        result = EnergyBillExtractorService(FakeDb()).parse_energy_bill_text(CPFL_PROBLEMATIC_TEXT)
+
+        self.assertIsNone(result.installation_number)
+        self.assertEqual(result.parsed_fields["tariff_flag"], "Verde")
+        self.assertIn("installation_number", result.parsed_fields["discarded_fields"])
+
+    def test_cpfl_discards_distributor_address_as_customer_city(self):
+        result = EnergyBillExtractorService(FakeDb()).parse_energy_bill_text(CPFL_PROBLEMATIC_TEXT)
+
+        self.assertIsNone(result.city)
+        self.assertIsNone(result.state)
+        self.assertIn("city", result.parsed_fields["discarded_fields"])
+        self.assertIn("cidade/UF", result.missing_fields)
+
+    def test_missing_bill_amount_does_not_become_zero(self):
+        result = EnergyBillExtractorService(FakeDb()).parse_energy_bill_text(CPFL_PROBLEMATIC_TEXT)
+
+        self.assertIsNone(result.current_bill_amount)
+        self.assertIsNone(result.average_bill_amount)
+        self.assertIn("valor da conta", result.missing_fields)
+        self.assertTrue(result.needs_human_review)
+        self.assertLess(result.confidence_score, 0.8)
+
+    def test_cpfl_extracts_low_consumption_with_kwh_context(self):
+        result = EnergyBillExtractorService(FakeDb()).parse_energy_bill_text(CPFL_PROBLEMATIC_TEXT)
+
+        self.assertEqual(result.current_consumption_kwh, 26)
+        self.assertEqual(result.average_consumption_kwh, 26)
+        self.assertEqual(result.parsed_fields["months_detected"], 1)
+
+    def test_cpfl_prioritizes_total_to_pay_over_taxes(self):
+        result = EnergyBillExtractorService(FakeDb()).parse_energy_bill_text(CPFL_AMOUNT_PRIORITY_TEXT)
+
+        self.assertEqual(result.current_bill_amount, 89.70)
+        self.assertEqual(result.average_bill_amount, 89.70)
+        self.assertEqual(result.parsed_fields["anchors"]["bill_amount"], "total a pagar")
+        self.assertGreaterEqual(result.confidence_score, 0.8)
+
+    def test_extraction_under_80_percent_stays_needs_review(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "cpfl.txt"
+            path.write_text(CPFL_PROBLEMATIC_TEXT, encoding="utf-8")
+            extraction = EnergyBillExtractorService(FakeDb()).extract_from_file(str(path))
+
+        self.assertEqual(extraction.status, "needs_review")
+        self.assertTrue(extraction.needs_human_review)
+        self.assertLess(float(extraction.confidence_score), 0.8)
+        self.assertFalse(extraction.current_bill_amount)
+        self.assertIn("review_reasons", extraction.parsed_fields)
 
     def test_ocr_disabled_does_not_break(self):
         settings.energy_bill_ocr_enabled = False
@@ -575,6 +659,33 @@ class EnergyBillServiceTest(unittest.TestCase):
         self.assertEqual(applied.utility_company, "CPFL")
         self.assertEqual(applied.extra["average_consumption_kwh"], 429)
         self.assertTrue([item for item in db.added if isinstance(item, AuditLog)])
+
+    def test_apply_to_lead_requires_confirmation_when_critical_fields_are_missing(self):
+        customer = customer_fixture()
+        lead = lead_fixture(customer)
+        extraction_model = EnergyBillExtraction(
+            id="extraction-review",
+            lead_id=None,
+            conversation_id="conversation-1",
+            customer_id=customer.id,
+            status="needs_review",
+            source="text",
+            origin="manual_text",
+            distributor="CPFL",
+            current_consumption_kwh=26,
+            current_bill_amount=None,
+            average_bill_amount=None,
+            confidence_score=0.42,
+            needs_human_review=True,
+            missing_fields=["valor da conta", "cidade/UF", "numero da instalacao"],
+            parsed_fields={"review_reasons": ["Valor da conta nao encontrado."]},
+            raw_extraction={},
+            created_at=utc_now(),
+        )
+        db = FakeDb(objects={(Lead, lead.id): lead}, scalar_queue=[extraction_model])
+
+        with self.assertRaises(ValueError):
+            EnergyBillExtractorService(db, admin_user()).apply_to_lead(extraction_model.id, lead.id)
 
     def test_generate_proposal_from_extraction_selects_kit_by_average_consumption(self):
         customer = customer_fixture()

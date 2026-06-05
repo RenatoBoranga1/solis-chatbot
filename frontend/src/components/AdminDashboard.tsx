@@ -559,9 +559,12 @@ export function AdminDashboard() {
   async function handleApplyEnergyBillToLead(id: string, leadId: string) {
     if (!token || !leadId) return;
     setEnergyBillLoadingKey(`apply:${id}`);
+    setError(null);
     try {
       await adminApi.applyEnergyBillToLead(token, id, leadId);
       await loadData();
+    } catch (applyError) {
+      setError("Existem campos importantes pendentes. Revise e confirme a leitura antes de aplicar ao lead.");
     } finally {
       setEnergyBillLoadingKey(null);
     }
@@ -839,6 +842,11 @@ const PROPOSAL_ITEM_CATEGORIES = [
 
 function formatCurrency(value: number | null | undefined) {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(value ?? 0));
+}
+
+function formatOptionalCurrency(value: number | null | undefined, fallback = "Nao identificado") {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return fallback;
+  return formatCurrency(value);
 }
 
 function formatMeasurement(value: number | null | undefined, unit: string, digits = 2) {
@@ -1367,12 +1375,14 @@ function EnergyBillsView({
           <div className="kit-summary-grid">
             <span><small>Distribuidora</small><strong>{preview.distributor ?? "A revisar"}</strong></span>
             <span><small>Consumo medio</small><strong>{formatMeasurement(preview.average_consumption_kwh, "kWh/mes", 0)}</strong></span>
-            <span><small>Conta atual</small><strong>{formatCurrency(preview.current_bill_amount)}</strong></span>
+            <span className={!preview.current_bill_amount ? "energy-bill-value--review" : ""}><small>Conta atual</small><strong>{formatOptionalCurrency(preview.current_bill_amount)}</strong></span>
             <span><small>Potencia estimada</small><strong>{formatMeasurement(preview.estimated_system_power_kwp, "kWp", 3)}</strong></span>
             <span><small>Confianca</small><strong>{Math.round((preview.confidence_score ?? 0) * 100)}%</strong></span>
             <span><small>Revisao humana</small><strong>{preview.needs_human_review ? "Sim" : "Nao"}</strong></span>
           </div>
+          {energyBillReviewReasons(preview).length > 0 && <EnergyBillReviewAlerts reasons={energyBillReviewReasons(preview)} />}
           {preview.missing_fields.length > 0 && <p>Dados faltantes: {preview.missing_fields.join(", ")}</p>}
+          <EnergyBillExtractionDebug parsedFields={preview.parsed_fields} />
           <EnergyBillHistoryChart history={preview.history} />
         </article>
       )}
@@ -1382,6 +1392,8 @@ function EnergyBillsView({
         {extractions.map((extraction) => {
           const targetLeadId = leadTargets[extraction.id] ?? extraction.lead_id ?? "";
           const ocr = energyBillOcrInfo(extraction);
+          const reviewReasons = energyBillReviewReasons(extraction);
+          const requiresConfirmedReview = requiresEnergyBillConfirmation(extraction);
           return (
             <div className="table-group" key={extraction.id}>
               <div className="table-row table-row--nine">
@@ -1389,8 +1401,10 @@ function EnergyBillsView({
                 <OriginBadge origin={extraction.origin} />
                 <span>{extraction.distributor ?? "A revisar"}</span>
                 <span>{formatMeasurement(extraction.average_consumption_kwh ?? extraction.current_consumption_kwh, "kWh", 0)}</span>
-                <span>{formatCurrency(extraction.average_bill_amount ?? extraction.current_bill_amount)}</span>
-                <span>{Math.round(Number(extraction.confidence_score ?? 0) * 100)}%</span>
+                <span className={!extraction.average_bill_amount && !extraction.current_bill_amount ? "energy-bill-value--review" : ""}>
+                  {formatOptionalCurrency(extraction.average_bill_amount ?? extraction.current_bill_amount)}
+                </span>
+                <span className={Number(extraction.confidence_score ?? 0) < 0.8 ? "energy-bill-value--review" : ""}>{Math.round(Number(extraction.confidence_score ?? 0) * 100)}%</span>
                 <select value={targetLeadId} onChange={(event) => setLeadTargets((current) => ({ ...current, [extraction.id]: event.target.value }))}>
                   <option value="">Selecionar lead</option>
                   {leads.map((lead) => (
@@ -1405,7 +1419,12 @@ function EnergyBillsView({
                     <CheckCircle2 size={15} />
                     Confirmar
                   </button>
-                  <button className="text-button" onClick={() => onApplyToLead(extraction.id, targetLeadId)} disabled={!targetLeadId || loadingKey === `apply:${extraction.id}`}>
+                  <button
+                    className="text-button"
+                    onClick={() => onApplyToLead(extraction.id, targetLeadId)}
+                    disabled={!targetLeadId || loadingKey === `apply:${extraction.id}` || (requiresConfirmedReview && extraction.status !== "confirmed")}
+                    title={requiresConfirmedReview && extraction.status !== "confirmed" ? "Revise e confirme a leitura antes de aplicar ao lead." : undefined}
+                  >
                     Aplicar
                   </button>
                   <button className="text-button text-button--proposal" onClick={() => onGenerateProposal(extraction.id)} disabled={loadingKey === `proposal:${extraction.id}`}>
@@ -1455,8 +1474,9 @@ function EnergyBillsView({
                 <div className="kit-summary-grid">
                   <span><small>Potencia estimada</small><strong>{formatMeasurement(extraction.estimated_system_power_kwp, "kWp", 3)}</strong></span>
                   <span><small>Geracao estimada</small><strong>{formatMeasurement(extraction.estimated_monthly_generation_kwh, "kWh/mes", 0)}</strong></span>
-                  <span><small>Economia estimada</small><strong>{formatCurrency(extraction.estimated_monthly_savings)}</strong></span>
+                  <span><small>Economia estimada</small><strong>{formatOptionalCurrency(extraction.estimated_monthly_savings, "A validar")}</strong></span>
                   <span><small>Documento</small><strong>{extraction.customer_document_masked ?? "Nao exibido"}</strong></span>
+                  <span><small>Bandeira</small><strong>{energyBillTariffFlag(extraction.parsed_fields) ?? "Nao identificada"}</strong></span>
                   <span><small>Origem</small><strong>{originLabel(extraction.origin)}</strong></span>
                   <span><small>Conversa</small><strong>{extraction.conversation_id ?? "Sem vinculo"}</strong></span>
                   <span><small>Metodo</small><strong>{ocr.method}</strong></span>
@@ -1465,8 +1485,13 @@ function EnergyBillsView({
                   <span><small>Paginas OCR</small><strong>{ocr.pages}</strong></span>
                 </div>
                 {ocr.notice && <p className={`proposal-alert proposal-alert--${ocr.noticeTone}`}>{ocr.notice}</p>}
+                {reviewReasons.length > 0 && <EnergyBillReviewAlerts reasons={reviewReasons} />}
+                {requiresConfirmedReview && extraction.status !== "confirmed" && (
+                  <p className="proposal-alert proposal-alert--warning">Existem campos importantes pendentes. Revise e confirme a leitura antes de aplicar ao lead.</p>
+                )}
                 {extraction.missing_fields.length > 0 && <p className="proposal-alert proposal-alert--warning">Revisar dados faltantes: {extraction.missing_fields.join(", ")}</p>}
                 {extraction.error_message && <p className="proposal-alert proposal-alert--warning">{extraction.error_message}</p>}
+                <EnergyBillExtractionDebug parsedFields={extraction.parsed_fields} />
                 <EnergyBillHistoryChart history={extraction.history} />
               </div>
             </div>
@@ -1476,6 +1501,58 @@ function EnergyBillsView({
       </section>
     </section>
   );
+}
+
+function EnergyBillReviewAlerts({ reasons }: { reasons: string[] }) {
+  if (!reasons.length) return null;
+  return (
+    <div className="energy-bill-review-alerts">
+      {reasons.map((reason) => (
+        <p className="proposal-alert proposal-alert--warning" key={reason}>{reason}</p>
+      ))}
+    </div>
+  );
+}
+
+function EnergyBillExtractionDebug({ parsedFields }: { parsedFields: Record<string, unknown> }) {
+  const debugPayload = energyBillDebugPayload(parsedFields);
+  if (!Object.keys(debugPayload).length) return null;
+  return (
+    <details className="energy-bill-debug">
+      <summary>Detalhes da extracao</summary>
+      <pre>{JSON.stringify(debugPayload, null, 2)}</pre>
+    </details>
+  );
+}
+
+function energyBillReviewReasons(extraction: EnergyBillParsedData) {
+  const fields = extraction.parsed_fields ?? {};
+  const configuredReasons = Array.isArray(fields.review_reasons) ? fields.review_reasons.filter((item): item is string => typeof item === "string") : [];
+  const reasons = new Set(configuredReasons);
+  if (!extraction.current_bill_amount && !extraction.average_bill_amount) reasons.add("Valor da conta nao encontrado.");
+  if (!extraction.city || !extraction.state) reasons.add("Cidade/endereco precisa de revisao.");
+  if (!extraction.installation_number) reasons.add("Unidade consumidora nao identificada com seguranca.");
+  if (Number(extraction.confidence_score ?? 0) < 0.8) reasons.add("Confianca abaixo de 80%.");
+  return Array.from(reasons);
+}
+
+function requiresEnergyBillConfirmation(extraction: EnergyBillExtraction) {
+  return extraction.needs_human_review || energyBillReviewReasons(extraction).length > 0 || Number(extraction.confidence_score ?? 0) < 0.8;
+}
+
+function energyBillTariffFlag(parsedFields: Record<string, unknown>) {
+  return typeof parsedFields?.tariff_flag === "string" ? parsedFields.tariff_flag : null;
+}
+
+function energyBillDebugPayload(parsedFields: Record<string, unknown>) {
+  const keys = ["parser", "tariff_flag", "customer_unit_number", "months_detected", "discarded_fields", "anchors", "source_snippets", "review_warnings", "review_reasons"];
+  return keys.reduce<Record<string, unknown>>((payload, key) => {
+    const value = parsedFields?.[key];
+    if (value !== undefined && value !== null && (!(Array.isArray(value)) || value.length > 0)) {
+      payload[key] = value;
+    }
+    return payload;
+  }, {});
 }
 
 function EnergyBillStatusPill({ status }: { status: string }) {

@@ -124,7 +124,7 @@ Enquanto o download real da midia da Meta nao estiver habilitado, arquivos Whats
 A primeira versao inclui:
 
 - parser generico para textos de contas brasileiras;
-- parser CPFL basico.
+- parser CPFL com regras por ancoras textuais e descarte de campos suspeitos.
 
 O parser busca:
 
@@ -138,6 +138,34 @@ O parser busca:
 - CPF/CNPJ mascarado.
 
 Novos parsers podem ser adicionados em `backend/app/services/energy_bill_parsers/`.
+
+## Precisao e descarte conservador
+
+O leitor segue a regra: e melhor retornar `null` e pedir revisao humana do que preencher campo com chute.
+
+Regras importantes:
+
+- `Verde`, `Amarela`, `Vermelha`, `Bandeira Verde`, `Bandeira Amarela`, `Bandeira Vermelha` e `Escassez hidrica` sao tratados como `tariff_flag`.
+- Bandeira tarifaria nunca deve preencher unidade consumidora, instalacao, cidade, endereco ou nome do cliente.
+- Linhas com `CPFL`, `CNPJ`, `agencia`, `atendimento`, `posto`, `sede`, `terreo`, `loja`, `ouvidoria`, `demonstrativo` ou `informacoes fiscais` nao sao usadas como cidade/endereco do cliente.
+- `R$ 0,00` nao e considerado valor valido, salvo quando houver indicacao clara de fatura zerada.
+- Valores de `ICMS`, `PIS/COFINS`, tarifa unitaria, multa, juros, imposto ou iluminacao publica nao sao usados como valor total quando nao ha ancora de total da fatura.
+- O valor total prioriza ancoras como `Total a pagar`, `Valor a pagar`, `Total da fatura`, `Valor da conta` e `Vencimento`.
+- Consumo atual prioriza contexto `Consumo faturado`, `Consumo medido`, `Consumo kWh` e `Energia ativa`.
+
+O campo `parsed_fields` registra informacoes de auditoria para revisao:
+
+- `parser`;
+- `tariff_flag`;
+- `customer_unit_number`;
+- `months_detected`;
+- `discarded_fields`;
+- `anchors`;
+- `source_snippets`, sempre mascarado;
+- `review_warnings`;
+- `review_reasons`.
+
+O painel mostra esses dados em `Detalhes da extracao`, facilitando entender por que um campo foi descartado ou por que a leitura ficou em revisao.
 
 ## OCR
 
@@ -207,6 +235,8 @@ Ao gerar proposta, o backend prefere `average_consumption_kwh` para estimar gera
 
 A proposta continua `draft` e deve ser revisada antes de envio.
 
+Extracoes com valor da conta ausente, cidade/UF ausente, unidade consumidora ausente ou confianca abaixo de 80% precisam ser confirmadas por usuario interno antes de aplicar ao lead. Esse bloqueio evita que uma leitura incerta alimente automaticamente proposta ou CRM.
+
 ## Como testar
 
 Backend:
@@ -226,9 +256,10 @@ Painel:
 4. Envie um `.txt` com dados de conta ou cole texto em `Testar texto extraido`.
 5. Envie tambem uma imagem/PDF escaneado em ambiente com OCR local habilitado.
 6. Confira consumo, valor, historico, confianca, campos faltantes e metadados de OCR.
-7. Confirme a leitura.
-8. Aplique em um lead.
-9. Gere proposta e revise o kit recomendado.
+7. Abra `Detalhes da extracao` e confira ancoras, trechos mascarados e campos descartados.
+8. Confirme a leitura quando os dados estiverem corretos.
+9. Aplique em um lead.
+10. Gere proposta e revise o kit recomendado.
 
 Widget:
 
@@ -243,13 +274,17 @@ Widget:
 - [ ] Testar com contas reais das principais distribuidoras atendidas.
 - [ ] Validar CPFL e ao menos uma conta generica.
 - [ ] Confirmar mascaramento de CPF/CNPJ.
+- [ ] Confirmar que `Verde`/bandeiras tarifarias nao viram unidade consumidora.
+- [ ] Confirmar que endereco institucional da distribuidora nao vira cidade do cliente.
+- [ ] Confirmar que valor desconhecido aparece como `null`/`Nao identificado`, nao como `R$ 0,00`.
 - [ ] Confirmar que arquivos grandes sao rejeitados.
 - [ ] Confirmar que OCR desligado nao quebra o fluxo.
 - [ ] Habilitar `local_tesseract` em homologacao e validar PNG/JPG/WEBP.
 - [ ] Validar PDF textual sem OCR e PDF escaneado com OCR.
 - [ ] Confirmar `parsed_fields.ocr_used`, `ocr_provider`, `ocr_page_count` e `ocr_error`.
 - [ ] Revisar status `needs_review`.
-- [ ] Aplicar extracao em lead real de teste.
+- [ ] Confirmar que extracao com campos criticos pendentes exige confirmacao antes de aplicar ao lead.
+- [ ] Aplicar extracao confirmada em lead real de teste.
 - [ ] Gerar proposta e conferir kit recomendado.
 - [ ] Enviar conta pelo widget e confirmar `origin=chatbot`.
 - [ ] Enviar midia WhatsApp de teste e confirmar pendencia ate download privado.

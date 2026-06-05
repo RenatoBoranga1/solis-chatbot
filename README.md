@@ -241,6 +241,8 @@ Para imagens e PDFs escaneados, o modulo possui OCR local opcional com Tesseract
 
 O upload de PDF tambem possui protecao contra conteudo binario gravado como texto. O backend remove bytes NUL/control characters antes de persistir `raw_text_excerpt`, `parsed_fields`, `raw_extraction`, campos de cliente/instalacao e mensagens de erro. Se a conta for PDF escaneado sem OCR habilitado, a extracao fica como `failed`/`needs_review` para revisao manual, sem retornar erro 500 ao painel.
 
+O parser de contas e conservador: se nao houver certeza, o campo fica `null` e entra em `missing_fields`/`review_reasons`. Bandeiras tarifarias como `Verde`, `Amarela`, `Vermelha` e `Escassez hidrica` sao registradas como `tariff_flag`, nunca como unidade consumidora, cidade ou cliente. Linhas institucionais da distribuidora, agencia, atendimento, `TERREO`, sede ou ouvidoria nao sao usadas como endereco/cidade do cliente. Valor desconhecido nao aparece como `R$ 0,00`; o painel mostra `Nao identificado` e exige revisao.
+
 Dados extraidos:
 
 - distribuidora;
@@ -254,6 +256,7 @@ Dados extraidos:
 - media, minimo e maximo de consumo;
 - potencia e geracao estimadas;
 - score de confianca e campos faltantes.
+- detalhes da extracao em `parsed_fields`, incluindo ancoras usadas, trechos mascarados e campos descartados.
 
 Variaveis:
 

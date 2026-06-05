@@ -326,12 +326,15 @@ class EnergyBillExtractorService:
         result.missing_fields = self._missing_fields(result)
         result.confidence_score = self._confidence_score(result)
         result.needs_human_review = result.confidence_score < settings.energy_bill_min_confidence_auto_apply
+        review_reasons = self._review_reasons_for_result(result)
         result.parsed_fields = {
             **result.parsed_fields,
             **self._extraction_metadata_fields(metadata),
+            "review_reasons": review_reasons,
             "parser_confidence_inputs": {
                 "missing_fields": result.missing_fields,
                 "history_count": len(result.history),
+                "discarded_fields_count": len(result.parsed_fields.get("discarded_fields") or {}),
             },
         }
         return result
@@ -384,6 +387,8 @@ class EnergyBillExtractorService:
         lead = self.db.get(Lead, lead_id)
         if not lead:
             raise ValueError("Lead not found")
+        if extraction.status != "confirmed" and self._critical_review_reasons(extraction):
+            raise ValueError("Existem campos importantes pendentes. Revise e confirme a leitura antes de aplicar ao lead.")
 
         self._sync_extraction_to_lead(extraction, lead)
         extraction.lead_id = lead.id
@@ -878,22 +883,59 @@ class EnergyBillExtractorService:
         return [label for label, value in checks.items() if not value]
 
     def _confidence_score(self, result: EnergyBillParseResult) -> float:
-        score = 0.15
+        score = 0.08
         if result.distributor:
-            score += 0.12
+            score += 0.1
         if result.installation_number:
-            score += 0.12
+            score += 0.15
         if result.current_consumption_kwh:
             score += 0.2
         if result.current_bill_amount:
-            score += 0.15
+            score += 0.2
         if len(result.history) >= 3:
-            score += 0.16
+            score += 0.13
         elif result.history:
-            score += 0.08
+            score += 0.06
         if result.city and result.state:
-            score += 0.1
-        return round(min(score, 0.99), 4)
+            score += 0.12
+        discarded_fields = result.parsed_fields.get("discarded_fields") if isinstance(result.parsed_fields, dict) else {}
+        if discarded_fields:
+            score -= min(0.18, 0.06 * len(discarded_fields))
+        if not result.current_bill_amount:
+            score -= 0.05
+        if not (result.city and result.state):
+            score -= 0.04
+        if not result.installation_number:
+            score -= 0.04
+        return round(max(0, min(score, 0.99)), 4)
+
+    def _review_reasons_for_result(self, result: EnergyBillParseResult) -> list[str]:
+        reasons: list[str] = []
+        if not (result.current_bill_amount or result.average_bill_amount):
+            reasons.append("Valor da conta nao encontrado.")
+        if not (result.city and result.state):
+            reasons.append("Cidade/endereco precisa de revisao.")
+        if not result.installation_number:
+            reasons.append("Unidade consumidora nao identificada com seguranca.")
+        discarded_fields = result.parsed_fields.get("discarded_fields") if isinstance(result.parsed_fields, dict) else {}
+        if discarded_fields:
+            reasons.append("Alguns campos foram descartados por parecerem dados da distribuidora ou bandeira tarifaria.")
+        if result.confidence_score < 0.8:
+            reasons.append("Confianca abaixo de 80%.")
+        return reasons
+
+    def _critical_review_reasons(self, extraction: EnergyBillExtraction) -> list[str]:
+        reasons: list[str] = []
+        if not (extraction.current_bill_amount or extraction.average_bill_amount):
+            reasons.append("valor da conta ausente")
+        if not (extraction.city and extraction.state):
+            reasons.append("cidade/UF ausente")
+        if not extraction.installation_number:
+            reasons.append("unidade consumidora ausente")
+        confidence = self._float_or_none(extraction.confidence_score)
+        if confidence is not None and confidence < 0.8:
+            reasons.append("confianca abaixo de 80%")
+        return reasons
 
     def _audit(self, action: str, extraction: EnergyBillExtraction, details: dict[str, Any] | None = None) -> None:
         self.db.add(

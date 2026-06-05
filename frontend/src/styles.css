@@ -1722,6 +1722,41 @@ input:disabled {
   gap: 12px;
 }
 
+.energy-bill-value--review {
+  color: #8a5b00;
+  font-weight: 700;
+}
+
+.energy-bill-review-alerts {
+  display: grid;
+  gap: 6px;
+}
+
+.energy-bill-review-alerts .proposal-alert {
+  margin: 0;
+}
+
+.energy-bill-debug {
+  border: 1px solid #dbe3ed;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 10px 12px;
+}
+
+.energy-bill-debug summary {
+  cursor: pointer;
+  color: #0b1f33;
+  font-weight: 700;
+}
+
+.energy-bill-debug pre {
+  overflow-x: auto;
+  margin: 10px 0 0;
+  white-space: pre-wrap;
+  color: #415166;
+  font-size: 0.82rem;
+}
+
 .energy-bill-history {
   display: grid;
   gap: 8px;

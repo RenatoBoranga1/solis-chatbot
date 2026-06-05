@@ -154,7 +154,7 @@ def apply_energy_bill_to_lead(
     try:
         return EnergyBillExtractorService(db, current_user).apply_to_lead(extraction_id, lead_id)
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/{extraction_id}/generate-proposal", response_model=ProposalOut)

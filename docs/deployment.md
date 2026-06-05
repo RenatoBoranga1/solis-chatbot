@@ -116,12 +116,17 @@ Confirmar tabelas:
 - Confirmar que PDF textual nao usa OCR quando a extracao direta for suficiente.
 - Confirmar que PDF binario/escaneado sem OCR retorna `failed`/`needs_review` com mensagem amigavel, sem erro 500.
 - Confirmar que nenhum retorno do painel contem `NUL (0x00)` em `raw_text_excerpt`, `parsed_fields`, `raw_extraction` ou `error_message`.
+- Confirmar que bandeiras tarifarias (`Verde`, `Amarela`, `Vermelha`) aparecem como `tariff_flag` e nao como unidade/instalacao.
+- Confirmar que endereco institucional da distribuidora, agencia, atendimento, `TERREO` ou ouvidoria nao aparece como cidade/endereco do cliente.
+- Confirmar que valor desconhecido aparece como `Nao identificado` no painel, nao como `R$ 0,00`.
+- Confirmar que `Detalhes da extracao` mostra ancoras, trechos mascarados e campos descartados.
 - Confirmar que o painel mostra metodo de extracao, OCR usado, provider, paginas processadas e erro amigavel.
 - Testar envio de PDF/imagem pelo widget em fluxo de orcamento e confirmar `origin=chatbot`.
 - Confirmar que `conversation.collected_data` e `lead.extra` recebem consumo, valor, distribuidora, confianca e status da leitura.
 - Para WhatsApp, baixar midia da Meta para storage privado antes de habilitar leitura automatica completa de `origin=whatsapp`.
 - Confirmar que CPF/CNPJ aparece mascarado.
 - Confirmar que extracoes de baixa confianca ficam como `needs_review`.
+- Confirmar que extracoes com valor/cidade/unidade pendentes ou confianca abaixo de 80% precisam ser confirmadas antes de aplicar ao lead.
 - Confirmar que aplicar extracao ao lead preenche `average_consumption_kwh` e `utility_company`.
 - Confirmar que proposta gerada usa consumo medio extraido para recomendar kit.
 - Definir rotina de limpeza/retencao de anexos conforme LGPD.
